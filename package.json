@@ -1,0 +1,13 @@
+{
+  "name": "event-manager",
+  "version": "1.0.0",
+  "description": "Local web app to manage events: teams, tasks, sponsors, critical info and timelines",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "license": "MIT"
+}

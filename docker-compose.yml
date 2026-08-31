@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./eventmanager-data:/app/data
+    environment:
+      - ADMIN_USER=admin
+      - ADMIN_PASS=admin123
+    restart: unless-stopped

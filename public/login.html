@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login - Event Manager</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%85%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/css/styles.css" />
+  <style>
+    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .login-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 2.5rem; width: 100%; max-width: 380px; box-shadow: 0 4px 24px rgba(0,0,0,.06); }
+    .login-card h1 { text-align: center; margin: 0 0 .25rem; font-size: 1.5rem; color: #0f172a; }
+    .login-card .subtitle { text-align: center; color: #64748b; margin-bottom: 1.5rem; font-size: .9rem; }
+    .login-card label { display: block; font-size: .85rem; font-weight: 500; color: #334155; margin-bottom: .35rem; }
+    .login-card input[type="text"], .login-card input[type="password"] { width: 100%; padding: .65rem .85rem; border: 1px solid #cbd5e1; border-radius: 8px; font-size: .95rem; outline: none; transition: border .2s; box-sizing: border-box; }
+    .login-card input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+    .login-card .btn-login { width: 100%; padding: .7rem; background: #3b82f6; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; margin-top: .75rem; transition: background .2s; }
+    .login-card .btn-login:hover { background: #2563eb; }
+    .login-card .btn-login:disabled { opacity: .6; cursor: not-allowed; }
+    .login-error { color: #dc2626; text-align: center; font-size: .85rem; margin-top: .75rem; min-height: 1.2em; }
+    .lang-toggle { position: absolute; top: 1rem; right: 1rem; background: none; border: 1px solid #e2e8f0; border-radius: 6px; padding: .3rem .6rem; cursor: pointer; font-size: .8rem; color: #64748b; }
+    [dir="rtl"] .login-card { text-align: right; }
+  </style>
+</head>
+<body>
+  <button class="lang-toggle" id="lang-toggle">EN / فا</button>
+  <div class="login-card">
+    <h1 id="title">Event Manager</h1>
+    <p class="subtitle" id="subtitle">Sign in to your account</p>
+    <form id="login-form" autocomplete="on">
+      <label for="username" id="label-user">Username</label>
+      <input type="text" id="username" name="username" autocomplete="username" required autofocus />
+      <label for="password" id="label-pass" style="margin-top:.75rem">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required />
+      <button type="submit" class="btn-login" id="btn-login">Sign In</button>
+    </form>
+    <div class="login-error" id="login-error"></div>
+  </div>
+
+  <script>
+    const LANG_KEY = 'evm_lang';
+    const I18N = {
+      en: {
+        'event.manager': 'Event Manager',
+        'sign.in': 'Sign in to your account',
+        'username': 'Username',
+        'password': 'Password',
+        'sign.in.btn': 'Sign In',
+        'login.error': 'Invalid username or password',
+        'login.title': 'Event Manager',
+      },
+      fa: {
+        'event.manager': 'مدیریت رویداد',
+        'sign.in': 'به حساب خود وارد شوید',
+        'username': 'نام کاربری',
+        'password': 'رمز عبور',
+        'sign.in.btn': 'ورود',
+        'login.error': 'نام کاربری یا رمز عبور اشتباه است',
+        'login.title': 'مدیریت رویداد',
+      }
+    };
+
+    let lang = localStorage.getItem(LANG_KEY) || 'en';
+    function t(key) { return (I18N[lang] && I18N[lang][key]) || (I18N.en[key]) || key; }
+
+    function applyLang() {
+      document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
+      document.documentElement.lang = lang;
+      document.getElementById('title').textContent = t('event.manager');
+      document.getElementById('subtitle').textContent = t('sign.in');
+      document.getElementById('label-user').textContent = t('username');
+      document.getElementById('label-pass').textContent = t('password');
+      document.getElementById('btn-login').textContent = t('sign.in.btn');
+      document.getElementById('lang-toggle').textContent = lang === 'en' ? 'فا / EN' : 'EN / فا';
+    }
+
+    document.getElementById('lang-toggle').addEventListener('click', () => {
+      lang = lang === 'en' ? 'fa' : 'en';
+      localStorage.setItem(LANG_KEY, lang);
+      applyLang();
+    });
+
+    applyLang();
+
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errEl = document.getElementById('login-error');
+      const btn = document.getElementById('btn-login');
+      errEl.textContent = '';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          window.location.href = '/';
+        } else {
+          errEl.textContent = t('login.error');
+        }
+      } catch (err) {
+        errEl.textContent = t('login.error');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
