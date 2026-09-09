@@ -80,7 +80,7 @@ function initials(name) {
 }
 
 function avatarHTML(m, size) {
-  if (m.photo) return `<img class="avatar${size ? ' avatar-' + size : ''}" src="${m.photo}" alt="" />`;
+  if (m.photo) return `<img class="avatar${size ? ' avatar-' + size : ''}" src="${esc(m.photo)}" alt="" />`;
   return `<span class="avatar${size ? ' avatar-' + size : ''}">${esc(initials(m.name))}</span>`;
 }
 
@@ -274,7 +274,7 @@ async function renderMyTasks() {
             <tr>
               <td>${esc(task.event_name)}${task.event_date ? `<div class="table-sub">${esc(fmtDate(task.event_date))}</div>` : ''}</td>
               <td>${esc(task.title)}${task.description ? `<div class="table-sub">${esc(task.description)}</div>` : ''}</td>
-              <td>${task.members && task.members.length ? `<div class="my-tasks-members">${task.members.map((mm) => `<span class="assignee">${mm.photo ? `<img class="avatar-mini" src="${mm.photo}" alt="">` : `<span class="avatar-mini">${esc(initials(mm.name))}</span>`} ${esc(mm.name)}</span>`).join('')}</div>` : esc(t('task.no.assignees'))}</td>
+              <td>${task.members && task.members.length ? `<div class="my-tasks-members">${task.members.map((mm) => `<span class="assignee">${mm.photo ? `<img class="avatar-mini" src="${esc(mm.photo)}" alt="">` : `<span class="avatar-mini">${esc(initials(mm.name))}</span>`} ${esc(mm.name)}</span>`).join('')}</div>` : esc(t('task.no.assignees'))}</td>
               <td>${esc(t(task.status === 'in_progress' ? 'col.in_progress' : task.status === 'done' ? 'col.done' : 'col.todo'))}</td>
               <td><span class="badge imp-${esc(task.importance)}">${esc(t('imp.' + task.importance))}</span></td>
               <td>${task.due_date ? esc(fmtDate(task.due_date)) : '—'}</td>
@@ -700,7 +700,7 @@ function taskCard(task) {
       ${task.due_date ? `<div class="due">${icon('clock', 13)} ${esc(t('due', { d: fmtDate(task.due_date) }))}</div>` : ''}
       ${task.members && task.members.length ? `
         <div class="assignees">
-          ${task.members.map((mm) => `<span class="assignee">${mm.photo ? `<img class="avatar-mini" src="${mm.photo}" alt="">` : `<span class="avatar-mini">${esc(initials(mm.name))}</span>`} ${esc(mm.name)}</span>`).join('')}
+          ${task.members.map((mm) => `<span class="assignee">${mm.photo ? `<img class="avatar-mini" src="${esc(mm.photo)}" alt="">` : `<span class="avatar-mini">${esc(initials(mm.name))}</span>`} ${esc(mm.name)}</span>`).join('')}
         </div>` : ''}
       ${isAdmin() && task.assignees && task.assignees.length ? `
         <div class="assignees assigned-users">
@@ -1147,6 +1147,7 @@ function financeCard(f) {
           ${f.category ? `<span>${icon('folder', 12)} ${esc(f.category)}</span>` : ''}
           ${f.date ? `<span>${icon('calendar', 12)} ${esc(fmtDate(f.date))}</span>` : ''}
         </div>
+        ${f.file_name ? `<div class="fin-file"><a class="btn-link" href="${esc(api.financeDownloadUrl(currentEvent.id, f.id))}" download>${icon('paperclip', 13)} ${esc(f.file_name)}</a> <span class="file-meta">${esc(fmtBytes(f.file_size))}</span></div>` : ''}
         ${f.notes ? `<div class="desc">${esc(f.notes)}</div>` : ''}
       </div>
       <div class="fin-amount ${inc ? 'am-in' : 'am-out'}">${inc ? '+' : '-'}${esc(fmtMoney(f.amount))}</div>
@@ -1159,6 +1160,8 @@ function financeCard(f) {
 
 function financeFormModal(item) {
   const f = item || { type: 'expense', title: '', amount: '', category: '', date: '', notes: '' };
+  let pickedFile = null;
+  let removed = false;
   openModal(`
     <h3>${esc(t(item ? 'fin.edit' : 'fin.add'))}</h3>
     <div class="form-grid">
@@ -1171,6 +1174,17 @@ function financeFormModal(item) {
       <div class="field"><label>${esc(t('f.category'))}</label><input id="f-category" value="${esc(f.category)}" placeholder="${esc(t('ph.fincat'))}" list="fin-cat-list" /></div>
       <div class="field full"><label>${esc(t('f.date'))}</label><input id="f-date" type="date" value="${esc(f.date)}" /></div>
       <div class="field full"><label>${esc(t('f.notes'))}</label><textarea id="f-notes">${esc(f.notes)}</textarea></div>
+      <div class="field full"><label>${esc(t('fin.file'))}</label>
+        <div class="fin-file-pick">
+          <input type="file" id="f-file" style="display:none" />
+          <button type="button" class="btn btn-sm" id="f-pick">${icon('paperclip', 14)} ${esc(t('fin.attach'))}</button>
+          <span id="f-file-info" class="${f.file_name && !removed ? '' : 'hidden'}">
+            ${icon('paperclip', 13)} <span id="f-file-name">${esc(f.file_name || '')}</span>
+            ${f.file_size ? `<span class="file-meta">${esc(fmtBytes(f.file_size))}</span>` : ''}
+            <button type="button" class="btn btn-ghost btn-icon" id="f-file-remove" title="${esc(t('fin.remove'))}" style="color:var(--red)">${icon('x', 14)}</button>
+          </span>
+        </div>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn" data-close>${esc(t('cancel'))}</button>
@@ -1185,6 +1199,27 @@ function financeFormModal(item) {
           cats.forEach((c) => { const o = document.createElement('option'); o.value = c; dl.appendChild(o); });
           document.body.appendChild(dl);
         }
+        const pick = overlay.querySelector('#f-pick');
+        const input = overlay.querySelector('#f-file');
+        const info = overlay.querySelector('#f-file-info');
+        const nameEl = overlay.querySelector('#f-file-name');
+        pick.addEventListener('click', () => input.click());
+        input.addEventListener('change', async () => {
+          const file = input.files && input.files[0];
+          if (!file) return;
+          if (file.size > 50 * 1024 * 1024) return toast(t('file.too.big'));
+          pickedFile = { name: file.name, mime: file.type || 'application/octet-stream', size: file.size, data: await readAsBase64(file) };
+          removed = false;
+          nameEl.textContent = file.name;
+          info.classList.remove('hidden');
+          const sz = info.querySelector('.file-meta'); if (sz) sz.textContent = fmtBytes(file.size);
+        });
+        info.querySelector('#f-file-remove').addEventListener('click', () => {
+          pickedFile = null;
+          removed = true;
+          input.value = '';
+          info.classList.add('hidden');
+        });
         overlay.querySelector('#f-save').addEventListener('click', async () => {
           const body = {
             type: document.getElementById('f-type').value,
@@ -1194,6 +1229,8 @@ function financeFormModal(item) {
             date: document.getElementById('f-date').value,
             notes: document.getElementById('f-notes').value,
           };
+          if (pickedFile) body.file = pickedFile;
+          if (removed && item) body.file_remove = true;
           if (!body.title.trim() || body.amount === '') return toast(t('fin.req'));
           if (item) await api.updateFinance(currentEvent.id, item.id, body);
           else await api.addFinance(currentEvent.id, body);

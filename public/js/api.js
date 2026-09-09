@@ -41,6 +41,7 @@ const api = {
   addFinance: (id, body) => request('POST', `/api/events/${id}/finances`, body),
   updateFinance: (id, fid, body) => request('PUT', `/api/events/${id}/finances/${fid}`, body),
   deleteFinance: (id, fid) => request('DELETE', `/api/events/${id}/finances/${fid}`),
+  financeDownloadUrl: (id, fid) => `/api/events/${id}/finances/${fid}/download`,
 
   addParticipant: (id, body) => request('POST', `/api/events/${id}/participants`, body),
   updateParticipant: (id, pid, body) => request('PUT', `/api/events/${id}/participants/${pid}`, body),

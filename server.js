@@ -21,6 +21,81 @@ const FILES_DIR = path.join(resolveDataRoot(), 'files');
 const MAX_BODY = 70 * 1024 * 1024;
 const MAX_FILE = 50 * 1024 * 1024;
 
+// --- Login rate limiting (in-memory, resets on restart) ---
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_PER_IP = 10;
+const LOGIN_MAX_PER_ACCOUNT = 5;
+const loginFails = new Map();
+
+function rateCheck(key, max) {
+  const now = Date.now();
+  let e = loginFails.get(key);
+  if (!e || now - e.windowStart > LOGIN_WINDOW_MS) {
+    e = { count: 0, windowStart: now };
+    loginFails.set(key, e);
+  }
+  e.count++;
+  return e.count <= max;
+}
+
+function rateClear(key) {
+  loginFails.delete(key);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, e] of loginFails) {
+    if (now - e.windowStart > LOGIN_WINDOW_MS) loginFails.delete(k);
+  }
+}, 60 * 1000).unref();
+
+function clientIp(req) {
+  if (process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true') {
+    const xff = req.headers['x-forwarded-for'];
+    if (xff) return String(xff).split(',')[0].trim();
+  }
+  return req.socket.remoteAddress || 'unknown';
+}
+
+function isSecure(req) {
+  if (process.env.COOKIE_SECURE === '1' || process.env.COOKIE_SECURE === 'true') return true;
+  if (req.socket && req.socket.encrypted) return true;
+  if ((process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true') &&
+      String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https') return true;
+  return false;
+}
+
+// Defense-in-depth CSRF check (SameSite=Strict is the primary control).
+function originAllowed(hostHeader, origin) {
+  let o;
+  try { o = new URL(origin); } catch { return false; }
+  const oh = o.host.toLowerCase();
+  const hostOnly = oh.includes(':') ? oh.split(':')[0] : oh;
+  if (hostOnly === 'localhost' || hostOnly === '127.0.0.1' || hostOnly === '::1') return true;
+  const h = String(hostHeader || '').split(':')[0].toLowerCase();
+  return h === hostOnly;
+}
+
+function methodChangesState(method) {
+  return method === 'POST' || method === 'PUT' || method === 'DELETE' || method === 'PATCH';
+}
+
+function securityHeaders(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'");
+}
+
+function safeStaticPath(pathname) {
+  const root = path.resolve(PUBLIC_DIR);
+  const candidate = path.resolve(root, '.' + path.sep + String(pathname || '').replace(/^[/\\]+/, ''));
+  if (candidate !== root && !candidate.startsWith(root + path.sep)) return null;
+  return candidate;
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -96,8 +171,8 @@ function parseCookies(req) {
   return cookies;
 }
 
-function setSessionCookie(res, token) {
-  const cookie = 'session=' + token + '; HttpOnly; Path=/; SameSite=Strict; Max-Age=' + (7 * 24 * 60 * 60);
+function setSessionCookie(res, token, secure) {
+  const cookie = 'session=' + token + '; HttpOnly; Path=/; SameSite=Strict; Max-Age=' + (7 * 24 * 60 * 60) + (secure ? '; Secure' : '');
   const existing = res.getHeader('Set-Cookie');
   if (existing) {
     res.setHeader('Set-Cookie', Array.isArray(existing) ? existing.concat([cookie]) : [existing, cookie]);
@@ -106,8 +181,8 @@ function setSessionCookie(res, token) {
   }
 }
 
-function clearSessionCookie(res) {
-  res.setHeader('Set-Cookie', 'session=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0');
+function clearSessionCookie(res, secure) {
+  res.setHeader('Set-Cookie', 'session=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0' + (secure ? '; Secure' : ''));
 }
 
 async function requireAuth(req, res) {
@@ -216,17 +291,32 @@ function sendFileDownload(res, f) {
 // --- Auth routes ---
 async function handleAuth(req, res, pathname, method) {
   if (pathname === '/api/auth/login' && method === 'POST') {
+    const ip = clientIp(req);
+    if (!rateCheck('ip:' + ip, LOGIN_MAX_PER_IP)) {
+      console.log('[AUTH] Login rate-limited (IP):', ip);
+      return sendError(res, 429, 'Too many login attempts. Try again later.');
+    }
     const body = await readBody(req);
-    const user = dbm.authenticateUser(String(body.username || ''), String(body.password || ''));
-    if (!user) return sendError(res, 401, 'Invalid username or password');
+    const username = String(body.username || '').trim();
+    if (!rateCheck('ip:' + ip + '|u:' + username, LOGIN_MAX_PER_ACCOUNT)) {
+      console.log('[AUTH] Login rate-limited (account):', username, 'from', ip);
+      return sendError(res, 429, 'Too many login attempts. Try again later.');
+    }
+    const user = dbm.authenticateUser(username, String(body.password || ''));
+    if (!user) {
+      console.log('[AUTH] Failed login:', username, 'from', ip);
+      return sendError(res, 401, 'Invalid username or password');
+    }
+    rateClear('ip:' + ip);
+    rateClear('ip:' + ip + '|u:' + username);
     const token = dbm.createSession(user.id);
-    setSessionCookie(res, token);
+    setSessionCookie(res, token, isSecure(req));
     return sendJson(res, 200, { ok: true, user: { id: user.id, username: user.username, role: user.role, permissions: user.permissions } });
   }
   if (pathname === '/api/auth/logout' && method === 'POST') {
     const token = parseCookies(req).session;
     if (token) dbm.deleteSession(token);
-    clearSessionCookie(res);
+    clearSessionCookie(res, isSecure(req));
     return sendJson(res, 200, { ok: true });
   }
   if (pathname === '/api/auth/me' && method === 'GET') {
@@ -443,18 +533,22 @@ async function handleApi(req, res, pathname) {
   // /api/events/:id/files
   if (parsed.params.tail && parsed.params.tail[0] === 'files') {
     if (method === 'GET' && !fileId) {
+      if (!canAccessEvent(user, eventId)) return sendError(res, 403, 'No access');
       const ev = dbm.getEvent(eventId);
       return sendJson(res, 200, ev.files || []);
     }
     if (method === 'POST' && !fileId) {
       if (!canWrite(user, eventId, 'files')) return sendError(res, 403, 'No permission');
       const saved = saveUploadedFile(eventId, await readBody(req));
-      return saved ? sendJson(res, 201, saved) : sendError(res, 400, 'Invalid file');
+      return saved ? sendJson(res, 201, dbm.scrubFile(saved)) : sendError(res, 400, 'Invalid file');
     }
     if (fileId) {
       const f = dbm.getFile(eventId, fileId);
       if (!f) return notFound(res);
-      if (method === 'GET') return sendFileDownload(res, f);
+      if (method === 'GET') {
+        if (!canAccessEvent(user, eventId)) return sendError(res, 403, 'No access');
+        return sendFileDownload(res, f);
+      }
       if (method === 'DELETE') {
         if (!canWrite(user, eventId, 'files')) return sendError(res, 403, 'No permission');
         dbm.deleteFile(eventId, fileId);
@@ -472,6 +566,12 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 201, dbm.createFinance(eventId, await readBody(req)));
     }
     if (financeId) {
+      if (method === 'GET' && parsed.params.tail[2] === 'download') {
+        if (!canAccessEvent(user, eventId)) return sendError(res, 403, 'No access');
+        const f = dbm.getFinance(eventId, financeId);
+        if (!f || !f.file_path) return notFound(res);
+        return sendFileDownload(res, { stored_path: f.file_path, mime: f.file_mime, name: f.file_name });
+      }
       if (method === 'PUT') {
         if (!canWrite(user, eventId, 'finances')) return sendError(res, 403, 'No permission');
         const t = dbm.updateFinance(eventId, financeId, await readBody(req));
@@ -529,7 +629,15 @@ async function handleApi(req, res, pathname) {
 }
 
 function serveStatic(req, res, pathname) {
-  let filePath = pathname === '/' ? path.join(PUBLIC_DIR, 'index.html') : path.join(PUBLIC_DIR, pathname);
+  if (pathname === '/' || pathname === '') {
+    return fs.readFile(path.join(PUBLIC_DIR, 'index.html'), (e, html) => {
+      if (e) return sendError(res, 500, 'Server error');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    });
+  }
+  const filePath = safeStaticPath(pathname);
+  if (!filePath) return notFound(res);
   const ext = path.extname(filePath).toLowerCase();
   const mime = MIME[ext] || 'application/octet-stream';
 
@@ -537,9 +645,8 @@ function serveStatic(req, res, pathname) {
     if (err) {
       if (!err.code || err.code === 'ENOENT') {
         // Try .html extension (e.g. /login -> login.html)
-        const htmlPath = pathname + '.html';
-        const htmlFile = path.join(PUBLIC_DIR, htmlPath);
-        if (fs.existsSync(htmlFile)) {
+        const htmlFile = safeStaticPath(pathname + '.html');
+        if (htmlFile && fs.existsSync(htmlFile)) {
           fs.readFile(htmlFile, (e2, html) => {
             if (e2) return sendError(res, 404, 'Not found');
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -555,7 +662,7 @@ function serveStatic(req, res, pathname) {
         });
         return;
       }
-      return sendError(res, 500, err.message);
+      return sendError(res, 500, 'Server error');
     }
     res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-cache' });
     res.end(data);
@@ -564,16 +671,26 @@ function serveStatic(req, res, pathname) {
 
 const server = http.createServer(async (req, res) => {
   const parsedUrl = url.parse(req.url, true);
-  const pathname = decodeURIComponent(parsedUrl.pathname);
+  let pathname;
+  try { pathname = decodeURIComponent(parsedUrl.pathname); } catch (e) { return sendError(res, 400, 'Bad request'); }
   console.log('[REQ]', req.method, pathname);
+  securityHeaders(res);
   try {
     if (pathname.startsWith('/api/')) {
+      if (methodChangesState(req.method)) {
+        const origin = req.headers.origin;
+        if (origin && !originAllowed(req.headers.host, origin)) {
+          console.log('[SEC] Cross-origin state change blocked:', origin);
+          return sendError(res, 403, 'Cross-origin request blocked');
+        }
+      }
       await handleApi(req, res, pathname);
     } else {
       serveStatic(req, res, pathname);
     }
   } catch (e) {
-    sendError(res, 400, e.message);
+    console.error('[ERR]', e);
+    sendError(res, 400, 'Bad request');
   }
 });
 

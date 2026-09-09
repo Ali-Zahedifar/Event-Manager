@@ -180,6 +180,52 @@ function ensureColumn(table, column, ddl) {
 }
 ensureColumn('members', 'section', "TEXT DEFAULT ''");
 ensureColumn('members', 'section_head', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('transactions', 'file_name', "TEXT DEFAULT ''");
+ensureColumn('transactions', 'file_mime', "TEXT DEFAULT ''");
+ensureColumn('transactions', 'file_size', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('transactions', 'file_path', "TEXT DEFAULT ''");
+
+// ---------- file storage helpers ----------
+const FILES_ROOT = path.join(DATA_ROOT, 'files');
+const MAX_FILE = 50 * 1024 * 1024;
+
+function safeFileName(name) {
+  const base = path.basename(String(name || 'file').replace(/[\\/]/g, '_')).replace(/[^\w.\- ()]/g, '_').trim() || 'file';
+  return base.slice(0, 120);
+}
+
+function saveFileBytes(eventId, fileData) {
+  if (!fileData || typeof fileData.data !== 'string' || !fileData.data) return null;
+  let buf;
+  try { buf = Buffer.from(fileData.data, 'base64'); } catch (e) { return null; }
+  if (!buf.length || buf.length > MAX_FILE) return null;
+  const name = safeFileName(fileData.name);
+  const mime = String(fileData.mime || 'application/octet-stream');
+  const evDir = path.join(FILES_ROOT, String(eventId));
+  fs.mkdirSync(evDir, { recursive: true });
+  const storedPath = path.join(evDir, `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${name}`);
+  fs.writeFileSync(storedPath, buf);
+  return { path: storedPath, name, mime, size: buf.length };
+}
+
+function deleteStoredFile(p) {
+  if (p) fs.unlink(p, () => {});
+}
+
+// Strip server-side paths before returning rows to clients.
+function scrubFile(f) {
+  if (!f) return f;
+  const cleaned = { ...f };
+  delete cleaned.stored_path;
+  return cleaned;
+}
+
+function scrubFinance(f) {
+  if (!f) return f;
+  const cleaned = { ...f };
+  delete cleaned.file_path;
+  return cleaned;
+}
 
 // ---------- auth helpers ----------
 function makeSalt() {
@@ -261,7 +307,10 @@ function deleteUser(id) {
 function authenticateUser(username, password) {
   const u = getUser(username);
   if (!u) return null;
-  if (hashPassword(password, u.salt) !== u.password_hash) return null;
+  const actual = Buffer.from(hashPassword(password, u.salt), 'hex');
+  const expected = Buffer.from(u.password_hash, 'hex');
+  const ok = actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+  if (!ok) return null;
   return { id: u.id, username: u.username, role: u.role, permissions: u.permissions };
 }
 
@@ -366,7 +415,7 @@ function getEvent(id) {
     t.assignees = taskAssigneeStmt.all(t.id);
   }
 
-  return { ...ev, members, tasks, sponsors, timeline, files, finances, participants, guests };
+  return { ...ev, members, tasks, sponsors, timeline, files: files.map(scrubFile), finances: finances.map(scrubFinance), participants, guests };
 }
 
 function listEvents() {
@@ -687,8 +736,9 @@ function deleteFile(eventId, fileId) {
 
 // ---------- finances ----------
 function createFinance(eventId, data) {
+  const saved = data.file ? saveFileBytes(eventId, data.file) : null;
   const r = db.prepare(
-    `INSERT INTO transactions (event_id, type, title, amount, category, date, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO transactions (event_id, type, title, amount, category, date, notes, file_name, file_mime, file_size, file_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     eventId,
     String(data.type === 'income' ? 'income' : 'expense'),
@@ -697,16 +747,35 @@ function createFinance(eventId, data) {
     String(data.category ?? ''),
     String(data.date ?? ''),
     String(data.notes ?? ''),
+    saved ? saved.name : '',
+    saved ? saved.mime : '',
+    saved ? saved.size : 0,
+    saved ? saved.path : '',
     now()
   );
-  return db.prepare('SELECT * FROM transactions WHERE id = ?').get(Number(r.lastInsertRowid));
+  return scrubFinance(db.prepare('SELECT * FROM transactions WHERE id = ?').get(Number(r.lastInsertRowid)));
+}
+
+function getFinance(eventId, financeId) {
+  return db.prepare('SELECT * FROM transactions WHERE id = ? AND event_id = ?').get(financeId, eventId) || null;
 }
 
 function updateFinance(eventId, financeId, data) {
   const f = db.prepare('SELECT * FROM transactions WHERE id = ? AND event_id = ?').get(financeId, eventId);
   if (!f) return null;
+  let file_name = f.file_name, file_mime = f.file_mime, file_size = f.file_size, file_path = f.file_path;
+  if (data.file_remove) {
+    if (f.file_path) deleteStoredFile(f.file_path);
+    file_name = ''; file_mime = ''; file_size = 0; file_path = '';
+  } else if (data.file) {
+    const saved = saveFileBytes(eventId, data.file);
+    if (saved) {
+      if (f.file_path) deleteStoredFile(f.file_path);
+      file_name = saved.name; file_mime = saved.mime; file_size = saved.size; file_path = saved.path;
+    }
+  }
   db.prepare(
-    `UPDATE transactions SET type = ?, title = ?, amount = ?, category = ?, date = ?, notes = ? WHERE id = ?`
+    `UPDATE transactions SET type = ?, title = ?, amount = ?, category = ?, date = ?, notes = ?, file_name = ?, file_mime = ?, file_size = ?, file_path = ? WHERE id = ?`
   ).run(
     String(data.type === 'income' ? 'income' : 'expense'),
     String(data.title ?? f.title),
@@ -714,14 +783,19 @@ function updateFinance(eventId, financeId, data) {
     String(data.category ?? f.category),
     String(data.date ?? f.date),
     String(data.notes ?? f.notes),
+    file_name,
+    file_mime,
+    file_size,
+    file_path,
     financeId
   );
-  return db.prepare('SELECT * FROM transactions WHERE id = ?').get(financeId);
+  return scrubFinance(db.prepare('SELECT * FROM transactions WHERE id = ?').get(financeId));
 }
 
 function deleteFinance(eventId, financeId) {
   const f = db.prepare('SELECT * FROM transactions WHERE id = ? AND event_id = ?').get(financeId, eventId);
   if (!f) return false;
+  if (f.file_path) deleteStoredFile(f.file_path);
   db.prepare('DELETE FROM transactions WHERE id = ?').run(financeId);
   return true;
 }
@@ -829,6 +903,11 @@ module.exports = {
   createFinance,
   updateFinance,
   deleteFinance,
+  getFinance,
+  scrubFile,
+  scrubFinance,
+  saveFileBytes,
+  deleteStoredFile,
   createParticipant,
   updateParticipant,
   deleteParticipant,
