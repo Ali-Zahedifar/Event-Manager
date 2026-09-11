@@ -114,6 +114,16 @@ db.exec(`
     created_at  TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS budget_items (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    type        TEXT NOT NULL DEFAULT 'expense',
+    category    TEXT DEFAULT '',
+    amount      REAL NOT NULL DEFAULT 0,
+    notes       TEXT DEFAULT '',
+    created_at  TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS participants (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -394,6 +404,7 @@ function getEvent(id) {
   const timeline = db.prepare('SELECT * FROM timeline_items WHERE event_id = ? ORDER BY datetime, id').all(id);
   const files = db.prepare('SELECT * FROM files WHERE event_id = ? ORDER BY id').all(id);
   const finances = db.prepare('SELECT * FROM transactions WHERE event_id = ? ORDER BY date DESC, id DESC').all(id);
+  const budgetItems = db.prepare('SELECT * FROM budget_items WHERE event_id = ? ORDER BY type, id').all(id);
   const participants = db.prepare('SELECT * FROM participants WHERE event_id = ? ORDER BY id').all(id);
   const guests = db.prepare('SELECT * FROM guests WHERE event_id = ? ORDER BY id').all(id);
 
@@ -415,7 +426,7 @@ function getEvent(id) {
     t.assignees = taskAssigneeStmt.all(t.id);
   }
 
-  return { ...ev, members, tasks, sponsors, timeline, files: files.map(scrubFile), finances: finances.map(scrubFinance), participants, guests };
+  return { ...ev, members, tasks, sponsors, timeline, files: files.map(scrubFile), finances: finances.map(scrubFinance), budget: budgetItems, participants, guests };
 }
 
 function listEvents() {
@@ -800,6 +811,43 @@ function deleteFinance(eventId, financeId) {
   return true;
 }
 
+// ---------- budget ----------
+function createBudgetItem(eventId, data) {
+  const r = db.prepare(
+    `INSERT INTO budget_items (event_id, type, category, amount, notes, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    eventId,
+    String(data.type === 'income' ? 'income' : 'expense'),
+    String(data.category ?? '').trim(),
+    Number(data.amount) || 0,
+    String(data.notes ?? ''),
+    now()
+  );
+  return db.prepare('SELECT * FROM budget_items WHERE id = ?').get(Number(r.lastInsertRowid));
+}
+
+function updateBudgetItem(eventId, itemId, data) {
+  const b = db.prepare('SELECT * FROM budget_items WHERE id = ? AND event_id = ?').get(itemId, eventId);
+  if (!b) return null;
+  db.prepare(
+    `UPDATE budget_items SET type = ?, category = ?, amount = ?, notes = ? WHERE id = ?`
+  ).run(
+    String(data.type === 'income' ? 'income' : 'expense'),
+    String(data.category ?? b.category),
+    Number(data.amount ?? b.amount) || 0,
+    String(data.notes ?? b.notes),
+    itemId
+  );
+  return db.prepare('SELECT * FROM budget_items WHERE id = ?').get(itemId);
+}
+
+function deleteBudgetItem(eventId, itemId) {
+  const b = db.prepare('SELECT * FROM budget_items WHERE id = ? AND event_id = ?').get(itemId, eventId);
+  if (!b) return false;
+  db.prepare('DELETE FROM budget_items WHERE id = ?').run(itemId);
+  return true;
+}
+
 // ---------- participants ----------
 function createParticipant(eventId, data) {
   const r = db.prepare(
@@ -908,6 +956,9 @@ module.exports = {
   scrubFinance,
   saveFileBytes,
   deleteStoredFile,
+  createBudgetItem,
+  updateBudgetItem,
+  deleteBudgetItem,
   createParticipant,
   updateParticipant,
   deleteParticipant,

@@ -238,6 +238,7 @@ const TAB_MAP = {
   timeline: 'timeline',
   files: 'files',
   finances: 'finances',
+  budget: 'budget',
   participants: 'participants',
   guests: 'guests',
 };
@@ -249,7 +250,7 @@ function parsePath(pathname) {
   if (parts[0] !== 'api') return null;
   if (parts.length < 2 || parts[1] !== 'events') return null;
 
-  const map = { members: 'memberId', tasks: 'taskId', sponsors: 'sponsorId', timeline: 'itemId', files: 'fileId', finances: 'financeId', participants: 'participantId', guests: 'guestId' };
+  const map = { members: 'memberId', tasks: 'taskId', sponsors: 'sponsorId', timeline: 'itemId', files: 'fileId', finances: 'financeId', budget: 'budgetId', participants: 'participantId', guests: 'guestId' };
   if (parts.length === 2) {
     params.eventId = null;
     params.tail = [];
@@ -427,7 +428,7 @@ async function handleApi(req, res, pathname) {
 
   const parsed = parsePath(pathname);
   if (!parsed || !parsed.ok) return notFound(res);
-  const { eventId, memberId, taskId, sponsorId, itemId, fileId, financeId, participantId, guestId } = parsed.params;
+  const { eventId, memberId, taskId, sponsorId, itemId, fileId, financeId, budgetId, participantId, guestId } = parsed.params;
 
   if (pathname === '/api/events' || pathname === '/api/events/') {
     if (method === 'GET') {
@@ -597,6 +598,26 @@ async function handleApi(req, res, pathname) {
       if (method === 'DELETE') {
         if (!canWrite(user, eventId, 'finances')) return sendError(res, 403, 'No permission');
         return dbm.deleteFinance(eventId, financeId) ? sendJson(res, 200, { ok: true }) : notFound(res);
+      }
+    }
+    return sendError(res, 405, 'Method not allowed');
+  }
+
+  // /api/events/:id/budget
+  if (parsed.params.tail && parsed.params.tail[0] === 'budget') {
+    if (method === 'POST' && !budgetId) {
+      if (!canWrite(user, eventId, 'budget')) return sendError(res, 403, 'No permission');
+      return sendJson(res, 201, dbm.createBudgetItem(eventId, await readBody(req)));
+    }
+    if (budgetId) {
+      if (method === 'PUT') {
+        if (!canWrite(user, eventId, 'budget')) return sendError(res, 403, 'No permission');
+        const b = dbm.updateBudgetItem(eventId, budgetId, await readBody(req));
+        return b ? sendJson(res, 200, b) : notFound(res);
+      }
+      if (method === 'DELETE') {
+        if (!canWrite(user, eventId, 'budget')) return sendError(res, 403, 'No permission');
+        return dbm.deleteBudgetItem(eventId, budgetId) ? sendJson(res, 200, { ok: true }) : notFound(res);
       }
     }
     return sendError(res, 405, 'Method not allowed');

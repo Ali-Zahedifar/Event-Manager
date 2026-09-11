@@ -40,6 +40,8 @@ function icon(name, size = 16) {
     image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 4 9 15 15 0 0 1-4 9 15 15 0 0 1-4-9 15 15 0 0 1 4-9Z"/>',
     paperclip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 1 1-2.83-2.83l8.49-8.48"/>',
+    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    wallet: '<path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2H6"/><path d="M16 3v4h4M12 12h4"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
     folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
     banknote: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/>',
@@ -49,6 +51,7 @@ function icon(name, size = 16) {
     arrowDown: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
     trendingUp: '<path d="M22 7 13.5 15.5 8.5 10.5 2 17M16 7h6v6"/>',
     trendingDown: '<path d="M22 17 13.5 8.5 8.5 13.5 2 7M16 17h6v-6"/>',
+    wallet: '<path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2H6"/><path d="M16 3v4h4M12 12h4"/>',
   };
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p[name] || p.flag}</svg>`;
 }
@@ -388,6 +391,7 @@ const TABS = [
   ['team', 'tab.team', 'users'],
   ['tasks', 'tab.tasks', 'list'],
   ['finances', 'tab.finances', 'banknote'],
+  ['budget', 'tab.budget', 'wallet'],
   ['participants', 'tab.participants', 'userPlus'],
   ['guests', 'tab.guests', 'star'],
   ['sponsors', 'tab.sponsors', 'gift'],
@@ -426,8 +430,12 @@ async function renderEventPage(id, tab) {
         <button class="btn btn-danger" id="del-event-btn">${icon('trash', 14)} ${esc(t('delete'))}</button>
       </div>
     </div>
-    <div class="tabs">
+    <div class="tabs" id="ev-tabs">
       ${TABS.filter(([k]) => canAccess(k, currentEvent.id)).map(([k, label, ic]) => `<button class="tab ${k === currentTab ? 'active' : ''}" data-tab="${k}">${icon(ic, 15)} ${esc(t(label))}</button>`).join('')}
+      <div class="more-wrap hidden" id="more-wrap">
+        <button class="tab more-btn" id="more-btn">${esc(t('tab.more'))} <span class="more-caret">▾</span></button>
+        <div class="more-menu" id="more-menu"></div>
+      </div>
     </div>
     <div id="tab-body"><div class="loading">${esc(t('loading'))}</div></div>`;
 
@@ -437,6 +445,8 @@ async function renderEventPage(id, tab) {
       location.hash = `#/event/${id}/${t2.dataset.tab}`;
     })
   );
+  bindMoreMenu();
+  applyTabOverflow();
   setupLangToggle();
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) logoutBtn.addEventListener('click', logout);
@@ -461,6 +471,71 @@ async function renderEventPage(id, tab) {
   renderEvent();
 }
 
+window.addEventListener('resize', () => applyTabOverflow());
+
+function bindMoreMenu() {
+  const wrap = document.getElementById('more-wrap');
+  const btn = document.getElementById('more-btn');
+  if (!wrap || !btn) return;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    wrap.classList.toggle('open');
+  });
+  document.addEventListener('click', (e) => {
+    if (wrap.classList.contains('open') && !wrap.contains(e.target)) {
+      wrap.classList.remove('open');
+    }
+  });
+}
+
+function applyTabOverflow() {
+  const wrap = document.getElementById('ev-tabs');
+  if (!wrap) return;
+  const more = document.getElementById('more-wrap');
+  if (!more) return;
+  const menu = document.getElementById('more-menu');
+  const tabs = Array.from(wrap.querySelectorAll(':scope > .tab'));
+  if (!tabs.length) { more.classList.add('hidden'); menu.innerHTML = ''; return; }
+  const margin = 14;
+  const full = wrap.clientWidth - margin;
+  let used = 0;
+  let firstHidden = -1;
+  for (let i = 0; i < tabs.length; i++) {
+    const w = tabs[i].offsetWidth;
+    if (used + w <= full) used += w;
+    else { firstHidden = i; break; }
+  }
+  if (firstHidden === -1) {
+    more.classList.add('hidden');
+    menu.innerHTML = '';
+    tabs.forEach((tb) => tb.classList.remove('overflow'));
+    return;
+  }
+  more.classList.remove('hidden');
+  const avail = wrap.clientWidth - more.offsetWidth - margin;
+  let hid = tabs.length;
+  used = 0;
+  for (let i = 0; i < tabs.length; i++) {
+    const w = tabs[i].offsetWidth;
+    if (used + w <= avail) used += w;
+    else { hid = i; break; }
+  }
+  let menuHtml = '';
+  tabs.forEach((tb, i) => {
+    const overflow = i >= hid;
+    tb.classList.toggle('overflow', overflow);
+    if (overflow) menuHtml += `<button class="more-tab ${tb.classList.contains('active') ? 'active' : ''}" data-tab="${tb.dataset.tab}">${tb.innerHTML}</button>`;
+  });
+  menu.innerHTML = menuHtml;
+  menu.querySelectorAll('.more-tab').forEach((bt) =>
+    bt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      location.hash = `#/event/${currentEvent.id}/${bt.dataset.tab}`;
+    })
+  );
+  more.classList.remove('open');
+}
+
 function renderEvent() {
   const ev = currentEvent;
   document.getElementById('ev-title').textContent = ev.name;
@@ -471,7 +546,7 @@ function renderEvent() {
   document.getElementById('ev-sub').innerHTML = sub.join('');
 
   const body = document.getElementById('tab-body');
-  const renderers = { overview: renderOverview, team: renderTeam, tasks: renderTasks, sponsors: renderSponsors, timeline: renderTimeline, files: renderFiles, finances: renderFinances, participants: renderParticipants, guests: renderGuests };
+  const renderers = { overview: renderOverview, team: renderTeam, tasks: renderTasks, sponsors: renderSponsors, timeline: renderTimeline, files: renderFiles, finances: renderFinances, budget: renderBudget, participants: renderParticipants, guests: renderGuests };
   body.innerHTML = `<div class="loading">${esc(t('loading'))}</div>`;
   renderers[currentTab]();
 }
@@ -1244,6 +1319,207 @@ function financeFormModal(item) {
   );
 }
 
+/* ---------- budget ---------- */
+const BUDGET_CAT_KEYS = {
+  income: ['tickets', 'sponsorship', 'grants', 'merchandise', 'donations', 'subsidies', 'other'],
+  expense: ['venue', 'catering', 'equipment', 'marketing', 'staffing', 'transport', 'entertainment', 'gifts', 'insurance', 'other'],
+};
+let budgetSub = 'expense';
+
+function budgetActualByCat(type) {
+  const map = {};
+  (currentEvent.finances || []).forEach((tx) => {
+    if (tx.type !== type) return;
+    const c = String(tx.category || '').trim().toLowerCase();
+    if (c) map[c] = (map[c] || 0) + (Number(tx.amount) || 0);
+  });
+  return map;
+}
+
+function renderBudget() {
+  const ev = currentEvent;
+  const items = ev.budget || [];
+  const incItems = items.filter((i) => i.type === 'income');
+  const expItems = items.filter((i) => i.type === 'expense');
+  const plannedInc = incItems.reduce((a, i) => a + (Number(i.amount) || 0), 0);
+  const plannedExp = expItems.reduce((a, i) => a + (Number(i.amount) || 0), 0);
+  const actualInc = (ev.finances || []).filter((t) => t.type === 'income').reduce((a, t) => a + (Number(t.amount) || 0), 0);
+  const actualExp = (ev.finances || []).filter((t) => t.type === 'expense').reduce((a, t) => a + (Number(t.amount) || 0), 0);
+  const writable = canWriteTab('budget', ev.id);
+  const isIncome = budgetSub === 'income';
+  const activeItems = isIncome ? incItems : expItems;
+  const activeActual = isIncome ? actualInc : actualExp;
+
+  document.getElementById('tab-body').innerHTML = `
+    <div class="section-head">
+      <h3>${esc(t('bud.count', { n: items.length }))}</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div class="seg">
+          <button class="${!isIncome ? '' : 'active'}" id="seg-income">${esc(t('fin.income2'))}</button>
+          <button class="${isIncome ? '' : 'active'}" id="seg-expense">${esc(t('fin.expense2'))}</button>
+        </div>
+        ${writable ? `<button class="btn btn-sm btn-primary" id="add-budget">${icon('plus', 14)} ${esc(t('bud.add'))}</button>` : ''}
+      </div>
+    </div>
+    <div class="budget-summary">
+      <div class="fin-summary-card">
+        <span class="fin-summary-icon ic-up">${icon('trendingUp', 15)}</span>
+        <span class="fin-summary-label">${esc(t('fin.income2'))}</span>
+        <span class="fin-summary-value">${esc(fmtMoney(plannedInc))}</span>
+        <span class="fin-summary-sub">${esc(t('bud.planned'))}</span>
+      </div>
+      <div class="fin-summary-card">
+        <span class="fin-summary-icon ic-up">${icon('trendingUp', 15)}</span>
+        <span class="fin-summary-label">${esc(t('fin.income2'))}</span>
+        <span class="fin-summary-value">${esc(fmtMoney(actualInc))}</span>
+        <span class="fin-summary-sub">${esc(t('bud.actual'))}</span>
+      </div>
+      <div class="fin-summary-card">
+        <span class="fin-summary-icon ic-down">${icon('trendingDown', 15)}</span>
+        <span class="fin-summary-label">${esc(t('fin.expense2'))}</span>
+        <span class="fin-summary-value">${esc(fmtMoney(plannedExp))}</span>
+        <span class="fin-summary-sub">${esc(t('bud.planned'))}</span>
+      </div>
+      <div class="fin-summary-card">
+        <span class="fin-summary-icon ic-down">${icon('trendingDown', 15)}</span>
+        <span class="fin-summary-label">${esc(t('fin.expense2'))}</span>
+        <span class="fin-summary-value">${esc(fmtMoney(actualExp))}</span>
+        <span class="fin-summary-sub">${esc(t('bud.actual'))}</span>
+      </div>
+      <div class="fin-summary-card">
+        <span class="fin-summary-icon ic-neutral">${icon('wallet', 15)}</span>
+        <span class="fin-summary-label">${esc(t('bud.net'))}</span>
+        <span class="fin-summary-value">${esc(fmtMoney(plannedInc - plannedExp))}</span>
+        <span class="fin-summary-sub">${esc(t('bud.planned'))}</span>
+      </div>
+    </div>
+    ${budgetTable(activeItems, activeActual, isIncome, writable)}
+  `;
+
+  const seg = (id) => document.getElementById(id);
+  seg('seg-income').addEventListener('click', () => { budgetSub = 'income'; renderBudget(); });
+  seg('seg-expense').addEventListener('click', () => { budgetSub = 'expense'; renderBudget(); });
+  const addBtn = document.getElementById('add-budget');
+  if (addBtn) addBtn.addEventListener('click', () => budgetFormModal(null));
+  bindBudgetRows('.budget-row', 'budget-actions');
+}
+
+function budgetTable(items, actualTotal, isIncome, writable) {
+  if (!items.length) {
+    return `<div class="empty-block">${icon('wallet', 26)}<p>${esc(t('bud.empty'))}</p></div>`;
+  }
+  const catLabels = BUDGET_CAT_KEYS[isIncome ? 'income' : 'expense'];
+  const activeCat = catLabels[0];
+  const actualByCat = budgetActualByCat(isIncome ? 'income' : 'expense');
+  const coveredKeys = new Set(items.map((i) => String(i.category || '').trim().toLowerCase()).filter(Boolean));
+  let coveredActual = 0;
+  coveredKeys.forEach((k) => { coveredActual += actualByCat[k] || 0; });
+  let rows = '';
+  items.forEach((it) => {
+    const cat = String(it.category || '').trim() || '';
+    const catKey = cat.toLowerCase();
+    const actual = actualByCat[catKey] || 0;
+    const delta = actual - (Number(it.amount) || 0);
+    const dn = icon('edit', 13);
+    const dl = icon('trash', 13);
+    rows += `
+      <tr class="budget-row" data-id="${it.id}">
+        <td><span class="cat-chip cat-chip-${isIncome ? 'inc' : 'exp'}">${esc(cat || t('bud.misc'))}</span></td>
+        <td class="budget-planned">${esc(fmtMoney(Number(it.amount) || 0))}</td>
+        <td class="budget-actual">${esc(fmtMoney(actual))}</td>
+        <td class="${delta >= 0 ? 'am-in' : 'am-out'}">${esc(delta >= 0 ? '+' : '−')}${esc(fmtMoney(Math.abs(delta)))}</td>
+        <td class="budget-notes">${esc(it.notes || '')}</td>
+        <td>
+          ${writable ? `<button class="btn btn-ghost btn-icon" data-act="edit" title="${esc(t('edit'))}">${dn}</button>
+          <button class="btn btn-ghost btn-icon" data-act="del" title="${esc(t('delete'))}">${dl}</button>` : ''}
+        </td>
+      </tr>`;
+  });
+  let unbudgeted = '';
+  if (actualTotal > coveredActual + 0.001) {
+    unbudgeted = `<div class="budget-unbudgeted">${esc(t('bud.unbudgeted', { n: fmtMoney(actualTotal - coveredActual) }))}</div>`;
+  }
+  return `
+    <div class="section-subhead"><h3>${esc(t(isIncome ? 'bud.income' : 'bud.expense'))}</h3></div>
+    <div class="table-wrap">
+      <table class="data-table budget-table">
+        <thead>
+          <tr><th>${esc(t('fin.category'))}</th><th>${esc(t('bud.planned'))}</th><th>${esc(t('bud.actual'))}</th><th>${esc(t('bud.delta'))}</th><th>${esc(t('notes'))}</th><th></th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${unbudgeted}`;
+}
+
+function bindBudgetRows(selector, actionsClass) {
+  const writable = canWriteTab('budget', currentEvent.id);
+  document.querySelectorAll(selector).forEach((row) => {
+    const id = Number(row.dataset.id);
+    row.querySelectorAll('[data-act]').forEach((btn) => {
+      const act = btn.dataset.act;
+      if ((act === 'edit' || act === 'del') && !writable) { btn.remove(); return; }
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (act === 'edit') {
+          const b = (currentEvent.budget || []).find((x) => x.id === id);
+          if (b) budgetFormModal(b);
+        } else if (act === 'del') {
+          confirmDialog(t('confirm.delete'), t('confirm.delete.msg'), () => delByType(id), t('delete'));
+        }
+      });
+    });
+  });
+}
+
+function budgetFormModal(item) {
+  const isIncome = item ? item.type === 'income' : budgetSub === 'income';
+  const catKeys = BUDGET_CAT_KEYS[isIncome ? 'income' : 'expense'];
+  const datalist = catKeys.map((k) => `<option value="${esc(t('bud.cat.' + k))}">`).join('');
+  openModal(
+    `<h3>${esc(t(item ? 'bud.edit' : 'bud.add'))}</h3>
+    <div class="form-grid">
+      <div class="field"><label>${esc(t('bud.type'))}</label><select id="b-type">
+        <option value="income" ${isIncome ? 'selected' : ''}>${esc(t('fin.income2'))}</option>
+        <option value="expense" ${!isIncome ? 'selected' : ''}>${esc(t('fin.expense2'))}</option>
+      </select></div>
+      <div class="field"><label>${esc(t('fin.category'))}</label><input id="b-cat" list="b-cat-list" placeholder="${esc(t('bud.customCat'))}" value="${esc(item ? item.category || '' : t('bud.cat.' + catKeys[0]))}">
+      <datalist id="b-cat-list">${datalist}</datalist></div>
+      <div class="field"><label>${esc(t('bud.amount'))} *</label><input id="b-amount" type="number" min="0" step="0.01" value="${esc(item ? item.amount : '')}" placeholder="0" /></div>
+      <div class="field full"><label>${esc(t('bud.notes'))}</label><input id="b-notes" value="${esc(item ? item.notes : '')}" placeholder="${esc(t('bud.notesPh'))}" /></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>${esc(t('cancel'))}</button>
+      <button class="btn btn-primary" id="b-save">${esc(t(item ? 'save.changes' : 'bud.add'))}</button>
+    </div>`,
+    {
+      onOpen(overlay) {
+        const typeSel = overlay.querySelector('#b-type');
+        const dl = overlay.querySelector('#b-cat-list');
+        typeSel.addEventListener('change', () => {
+          const t = typeSel.value;
+          const keys = BUDGET_CAT_KEYS[t === 'income' ? 'income' : 'expense'];
+          dl.innerHTML = keys.map((k) => `<option value="${esc(t('bud.cat.' + k))}">`).join('');
+        });
+        overlay.querySelector('#b-save').addEventListener('click', async () => {
+          const type = overlay.querySelector('#b-type').value;
+          const category = overlay.querySelector('#b-cat').value.trim() || t('bud.cat.' + BUDGET_CAT_KEYS[type === 'income' ? 'income' : 'expense'][0]);
+          const amount = Number(overlay.querySelector('#b-amount').value);
+          if (!(amount > 0)) return toast(t('bud.req'));
+          const notes = overlay.querySelector('#b-notes').value.trim();
+          const body = { type, category, amount, notes };
+          const evId = currentEvent.id;
+          if (item) await api.updateBudget(evId, item.id, body);
+          else await api.addBudget(evId, body);
+          currentEvent = await api.event(evId);
+          closeModal();
+          renderBudget();
+        });
+      },
+    }
+  );
+}
+
 /* ---------- participants ---------- */
 function renderParticipants() {
   const ev = currentEvent;
@@ -1511,6 +1787,9 @@ function editByType(id) {
   } else if (tab === 'finances') {
     const f = currentEvent.finances.find((x) => x.id === id);
     if (f) financeFormModal(f);
+  } else if (tab === 'budget') {
+    const b = (currentEvent.budget || []).find((x) => x.id === id);
+    if (b) budgetFormModal(b);
   } else if (tab === 'participants') {
     const p = currentEvent.participants.find((x) => x.id === id);
     if (p) participantFormModal(p);
@@ -1538,6 +1817,9 @@ async function delByType(id) {
   } else if (tab === 'finances') {
     currentEvent = await api.deleteFinance(evId, id) ? (await api.event(evId)) : currentEvent;
     renderFinances();
+  } else if (tab === 'budget') {
+    currentEvent = await api.deleteBudget(evId, id) ? (await api.event(evId)) : currentEvent;
+    renderBudget();
   } else if (tab === 'participants') {
     currentEvent = await api.deleteParticipant(evId, id) ? (await api.event(evId)) : currentEvent;
     renderParticipants();
@@ -1557,6 +1839,7 @@ const ALL_TABS = [
   ['team', 'tab.team'],
   ['tasks', 'tab.tasks'],
   ['finances', 'tab.finances'],
+  ['budget', 'tab.budget'],
   ['participants', 'tab.participants'],
   ['guests', 'tab.guests'],
   ['sponsors', 'tab.sponsors'],
