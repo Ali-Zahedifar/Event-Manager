@@ -820,7 +820,7 @@ function renderSponsors() {
 
 function sponsorCard(s) {
   return `
-    <div class="card sponsor-card" data-id="${s.id}">
+    <div class="card sponsor-card status-${esc(s.status)}" data-id="${s.id}">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
         <div>
           <h4>${esc(s.name)}</h4>
@@ -1564,14 +1564,49 @@ const ALL_TABS = [
   ['files', 'tab.files'],
 ];
 
+// Parse a user's stored permissions into { tab: "view" | "write" }.
+// Legacy arrays: viewer -> view, custom -> write.
+function parseUserPerms(u) {
+  let raw;
+  try { raw = JSON.parse(u.permissions || '[]'); } catch { return {}; }
+  if (!raw || typeof raw !== 'object') return {};
+  const map = {};
+  if (Array.isArray(raw)) {
+    raw.forEach((tab) => { map[String(tab)] = u.role === 'viewer' ? 'view' : 'write'; });
+  } else {
+    for (const [tab, v] of Object.entries(raw)) {
+      map[tab] = (v === 'write' || (v && v.write)) ? 'write' : 'view';
+    }
+  }
+  return map;
+}
+
+// Legacy viewer with an empty permissions array sees all tabs.
+function viewerAllTabsFor(u) {
+  if (!u || u.role !== 'viewer') return false;
+  try { const r = JSON.parse(u.permissions || '[]'); return Array.isArray(r) && r.length === 0; } catch { return false; }
+}
+
+function tabLabel(tab) {
+  const found = ALL_TABS.find(([k]) => k === tab);
+  return found ? found[1] : tab;
+}
+
+function permSummary(u) {
+  if (u.role === 'admin') return t('all');
+  if (u.role === 'assignee') return '-';
+  if (viewerAllTabsFor(u)) return t('all');
+  const m = parseUserPerms(u);
+  const keys = Object.keys(m);
+  if (!keys.length) return t('perm.none');
+  return keys.map((tab) => esc(t(tabLabel(tab))) + ' · ' + esc(t(m[tab] === 'write' ? 'perm.edit' : 'perm.view'))).join(', ');
+}
+
 async function usersModal() {
   const users = await request('GET', '/api/users');
   const rows = users.map((u) => {
     const roleLabel = u.role === 'admin' ? t('role.admin') : u.role === 'viewer' ? t('role.viewer') : u.role === 'assignee' ? t('role.assignee') : t('role.custom');
-    let permLabel = '-';
-    if (u.role === 'custom' || u.role === 'viewer') {
-      try { permLabel = JSON.parse(u.permissions || '[]').join(', '); } catch { permLabel = '-'; }
-    }
+    const permLabel = permSummary(u);
     const evLabel = u.role === 'admin' ? t('all') : (u.role === 'assignee' ? '-' : String((u.eventIds || []).length));
     return '<tr data-uid="' + u.id + '">'
       + '<td>' + esc(u.username) + '</td>'
@@ -1616,20 +1651,47 @@ async function usersModal() {
 async function userFormModal(existing) {
   const isEdit = !!existing;
   const title = isEdit ? t('edit.user') : t('add.user');
-  const perms = isEdit ? (function() { try { return JSON.parse(existing.permissions || '[]'); } catch { return []; } })() : [];
+  const roleOf = (existing && existing.role) || 'viewer';
+  const permMap0 = existing ? parseUserPerms(existing) : {};
+  const viewerAll = isEdit && viewerAllTabsFor(existing);
   const assigned = isEdit && existing.eventIds ? existing.eventIds.map(Number) : [];
-  const initialRole = (existing && existing.role) || 'viewer';
   const showsEvents = (r) => r === 'viewer' || r === 'custom';
   const showsPerms = (r) => r === 'viewer' || r === 'custom';
 
   const events = await request('GET', '/api/events');
 
-  let permChecks = ALL_TABS.map(([k, label]) => {
-    const checked = perms.includes(k) ? 'checked' : '';
-    return '<label class="perm-check"><input type="checkbox" value="' + k + '" ' + checked + '/> ' + esc(t(label)) + '</label>';
-  }).join('');
+  // Per-tab permission rows. Viewer gets a read-only "view" toggle per tab;
+  // custom gets a "view" and a "write" toggle (write implies view).
+  function permRows(role) {
+    const isCustom = role === 'custom';
+    return ALL_TABS.map(([k, labelKey]) => {
+      const lvl = permMap0[k];
+      const viewOn = viewerAll || lvl != null;
+      const writeOn = lvl === 'write';
+      return '<tr data-tab="' + k + '">'
+        + '<td class="perm-name">' + esc(t(labelKey)) + '</td>'
+        + '<td class="perm-cell"><input type="checkbox" class="p-view" value="' + k + '"' + (viewOn ? ' checked' : '') + ' /></td>'
+        + (isCustom ? '<td class="perm-cell"><input type="checkbox" class="p-write" value="' + k + '"' + (writeOn ? ' checked' : '') + ' /></td>' : '')
+        + '</tr>';
+    }).join('');
+  }
 
-  let eventChecks = events.map((e) => {
+  function permSection(role) {
+    const isCustom = role === 'custom';
+    if (!showsPerms(role)) return '';
+    return '<div class="user-section">'
+      + '<div class="section-label">' + esc(t('perm.section.tabs')) + '</div>'
+      + (isCustom
+          ? '<div class="hint">' + esc(t('perm.hint')) + '</div>'
+          : '<div class="hint">' + esc(t('perm.viewonly.hint')) + '</div>')
+      + '<table class="perm-table"><thead><tr>'
+      + '<th>' + esc(t('tab')) + '</th><th>' + esc(t('perm.view')) + '</th>'
+      + (isCustom ? '<th>' + esc(t('perm.edit')) + '</th>' : '')
+      + '</tr></thead><tbody>' + permRows(role) + '</tbody></table>'
+      + '</div>';
+  }
+
+  const eventChecks = events.map((e) => {
     const checked = assigned.includes(Number(e.id)) ? 'checked' : '';
     return '<label class="perm-check"><input type="checkbox" class="ev-cb" value="' + e.id + '" ' + checked + '/> ' + esc(e.name) + '</label>';
   }).join('');
@@ -1637,45 +1699,54 @@ async function userFormModal(existing) {
   openModal(
     '<h3>' + esc(title) + '</h3>'
     + '<div class="form-stack">'
-    + '<label>' + esc(t('username')) + '</label>'
-    + '<input id="u-name" type="text" value="' + esc(existing ? existing.username : '') + '" ' + (isEdit ? 'disabled' : '') + '/>'
-    + '<label>' + esc(t('password')) + (isEdit ? ' (' + esc(t('password.optional')) + ')' : '') + '</label>'
-    + '<input id="u-pass" type="password" autocomplete="new-password" />'
-    + '<label>' + esc(t('role')) + '</label>'
+    + '<div class="form-grid">'
+    + '<div class="field"><label>' + esc(t('username')) + '</label>'
+    + '<input id="u-name" type="text" value="' + esc(existing ? existing.username : '') + '" ' + (isEdit ? 'disabled' : '') + '/></div>'
+    + '<div class="field"><label>' + esc(t('password')) + (isEdit ? ' <span class="hint-inline">(' + esc(t('password.optional')) + ')</span>' : '') + '</label>'
+    + '<input id="u-pass" type="password" autocomplete="new-password" /></div>'
+    + '<div class="field full"><label>' + esc(t('role')) + '</label>'
     + '<select id="u-role">'
-    + '<option value="admin"' + (initialRole === 'admin' ? ' selected' : '') + '>' + esc(t('role.admin')) + '</option>'
-    + '<option value="viewer"' + (initialRole === 'viewer' ? ' selected' : '') + '>' + esc(t('role.viewer')) + '</option>'
-    + '<option value="custom"' + (initialRole === 'custom' ? ' selected' : '') + '>' + esc(t('role.custom')) + '</option>'
-    + '<option value="assignee"' + (initialRole === 'assignee' ? ' selected' : '') + '>' + esc(t('role.assignee')) + '</option>'
-    + '</select>'
-    + '<div id="u-events-wrap" style="' + (showsEvents(initialRole) ? '' : 'display:none') + '">'
-    + '<label>' + esc(t('events')) + '</label>'
-    + '<div class="perm-grid">' + eventChecks + '</div>'
+    + '<option value="admin"' + (roleOf === 'admin' ? ' selected' : '') + '>' + esc(t('role.admin')) + '</option>'
+    + '<option value="viewer"' + (roleOf === 'viewer' ? ' selected' : '') + '>' + esc(t('role.viewer')) + '</option>'
+    + '<option value="custom"' + (roleOf === 'custom' ? ' selected' : '') + '>' + esc(t('role.custom')) + '</option>'
+    + '<option value="assignee"' + (roleOf === 'assignee' ? ' selected' : '') + '>' + esc(t('role.assignee')) + '</option>'
+    + '</select></div>'
     + '</div>'
-    + '<div id="u-perms-wrap" style="' + (showsPerms(initialRole) ? '' : 'display:none') + '">'
-    + '<label>' + esc(t('permissions')) + '</label>'
-    + '<div class="perm-grid">' + permChecks + '</div>'
+    + '<div id="u-events-wrap" class="user-section" style="' + (showsEvents(roleOf) ? '' : 'display:none') + '">'
+    + '<div class="section-label">' + esc(t('perm.section.events')) + '</div>'
+    + '<div class="hint">' + esc(t('perm.events.hint')) + '</div>'
+    + '<div class="perm-grid perm-grid-scroll">' + eventChecks + '</div>'
     + '</div>'
+    + '<div id="u-perms-wrap">' + permSection(roleOf) + '</div>'
     + '<button class="btn btn-primary" id="u-save">' + esc(t('save')) + '</button>'
     + '</div>',
     { onOpen(overlay) {
       const roleSel = overlay.querySelector('#u-role');
-      const permWrap = overlay.querySelector('#u-perms-wrap');
       const eventsWrap = overlay.querySelector('#u-events-wrap');
+      const permWrap = overlay.querySelector('#u-perms-wrap');
       roleSel.addEventListener('change', () => {
         eventsWrap.style.display = showsEvents(roleSel.value) ? '' : 'none';
-        permWrap.style.display = showsPerms(roleSel.value) ? '' : 'none';
+        permWrap.innerHTML = permSection(roleSel.value);
+        bindPermToggles(overlay);
       });
+      bindPermToggles(overlay);
       overlay.querySelector('#u-save').addEventListener('click', async () => {
-        const body = { role: roleSel.value };
+        const role = roleSel.value;
+        const body = { role };
         const pass = overlay.querySelector('#u-pass').value;
         if (pass) body.password = pass;
-        if (roleSel.value === 'custom' || roleSel.value === 'viewer') {
-          body.permissions = [...overlay.querySelectorAll('#u-perms-wrap input:checked')].map((c) => c.value);
+        if (role === 'custom' || role === 'viewer') {
+          body.permissions = {};
+          overlay.querySelectorAll('#u-perms-wrap tr[data-tab]').forEach((tr) => {
+            const v = tr.querySelector('.p-view');
+            if (!v || !v.checked) return;
+            const w = tr.querySelector('.p-write');
+            body.permissions[v.value] = w && w.checked ? 'write' : 'view';
+          });
         } else {
           body.permissions = [];
         }
-        if (roleSel.value === 'admin' || roleSel.value === 'assignee') {
+        if (role === 'admin' || role === 'assignee') {
           body.eventIds = [];
         } else {
           body.eventIds = [...overlay.querySelectorAll('.ev-cb:checked')].map((c) => Number(c.value));
@@ -1696,6 +1767,18 @@ async function userFormModal(existing) {
       });
     } }
   );
+}
+
+// Write implies view: ticking write checks view; unticking view clears write.
+function bindPermToggles(overlay) {
+  overlay.querySelectorAll('#u-perms-wrap tr[data-tab]').forEach((tr) => {
+    const v = tr.querySelector('.p-view');
+    const w = tr.querySelector('.p-write');
+    if (w) {
+      w.addEventListener('change', () => { if (w.checked) v.checked = true; });
+      v.addEventListener('change', () => { if (!v.checked) w.checked = false; });
+    }
+  });
 }
 
 /* ---------- change own password ---------- */

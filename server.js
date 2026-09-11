@@ -200,12 +200,29 @@ async function requireAdmin(req, res) {
   return user;
 }
 
+// Per-tab permission level map: { tab: "view" | "write" }. Legacy arrays -> custom: write.
+function tabPerms(user) {
+  let raw;
+  try { raw = JSON.parse(user.permissions || '[]'); } catch { return {}; }
+  if (!raw || typeof raw !== 'object') return {};
+  const map = {};
+  if (Array.isArray(raw)) {
+    raw.forEach((tab) => { map[String(tab)] = 'write'; });
+  } else {
+    for (const [tab, v] of Object.entries(raw)) {
+      if (v === 'write' || (v && v.write)) map[tab] = 'write';
+      else if (v === 'view' || (v && v.can)) map[tab] = 'view';
+    }
+  }
+  return map;
+}
+
 function canWrite(user, eventId, tab) {
   if (user.role === 'admin') return true;
   if (user.role === 'viewer') return false;
   if (user.role === 'assignee') return false;
   if (!dbm.userCanAccessEvent(user.id, eventId)) return false;
-  try { return JSON.parse(user.permissions).includes(tab); } catch { return false; }
+  return tabPerms(user)[tab] === 'write';
 }
 
 function canAccessEvent(user, eventId) {
