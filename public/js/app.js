@@ -52,7 +52,10 @@ function icon(name, size = 16) {
     arrowDown: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
     trendingUp: '<path d="M22 7 13.5 15.5 8.5 10.5 2 17M16 7h6v6"/>',
     trendingDown: '<path d="M22 17 13.5 8.5 8.5 13.5 2 7M16 17h6v-6"/>',
-    wallet: '<path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2H6"/><path d="M16 3v4h4M12 12h4"/>',
+    mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/>',
+    briefcase: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16M2 12h20"/>',
+    compass: '<circle cx="12" cy="12" r="10"/><path d="m16.24 7.76-2.12 6.36-6.36 2.12 2.12-6.36Z"/><path d="m14.12 9.88-2.36 2.36-2.36-2.36 2.36-2.36Z"/>',
+    toggle: '<circle cx="8" cy="12" r="4"/><path d="M8 12h12M13 8l3 4-3 4"/>',
   };
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p[name] || p.flag}</svg>`;
 }
@@ -391,27 +394,33 @@ const TABS = [
   ['overview', 'tab.overview', 'spark'],
   ['team', 'tab.team', 'users'],
   ['tasks', 'tab.tasks', 'list'],
-  ['finances', 'tab.finances', 'banknote'],
-  ['budget', 'tab.budget', 'wallet'],
+  ['timeline', 'tab.timeline', 'clock'],
+  ['design', 'tab.design', 'palette'],
+  ['speakers', 'tab.speakers', 'mic'],
+  ['workshops', 'tab.workshops', 'briefcase'],
+  ['adventures', 'tab.adventures', 'compass'],
   ['participants', 'tab.participants', 'userPlus'],
   ['guests', 'tab.guests', 'star'],
   ['sponsors', 'tab.sponsors', 'gift'],
-  ['timeline', 'tab.timeline', 'clock'],
-  ['design', 'tab.design', 'palette'],
+  ['finances', 'tab.finances', 'banknote'],
+  ['budget', 'tab.budget', 'wallet'],
   ['files', 'tab.files', 'paperclip'],
 ];
+
+// Modules that admins can enable/disable per event ('overview' is always on).
+const MODULES = ['team', 'tasks', 'timeline', 'design', 'speakers', 'workshops', 'adventures', 'participants', 'guests', 'sponsors', 'finances', 'budget', 'files'];
 
 let currentEvent = null;
 let currentTab = 'overview';
 
 async function renderEventPage(id, tab) {
-  currentTab = TABS.some((t2) => t2[0] === tab) ? tab : 'overview';
   try {
     currentEvent = await api.event(id);
   } catch (e) {
     document.getElementById('app').innerHTML = `<div class="empty"><div class="big">😕</div><h3>${esc(t('event.notfound'))}</h3></div>`;
     return;
   }
+  currentTab = visibleTabs().some((t2) => t2 === tab) ? tab : fallbackTab();
   document.getElementById('app').innerHTML = `
     <div class="topbar">
       <button class="back-link" id="back-btn">${icon('back', 16)} ${esc(t('all.events'))}</button>
@@ -428,27 +437,18 @@ async function renderEventPage(id, tab) {
         <div class="sub" id="ev-sub"></div>
       </div>
       <div style="display:flex;gap:10px;">
+        ${isAdmin() ? `<button class="btn btn-sm" id="modules-btn">${icon('toggle', 14)} ${esc(t('modules'))}</button>` : ''}
         <button class="btn" id="edit-event-btn">${icon('pencil', 14)} ${esc(t('edit'))}</button>
         <button class="btn btn-danger" id="del-event-btn">${icon('trash', 14)} ${esc(t('delete'))}</button>
       </div>
     </div>
-    <div class="tabs" id="ev-tabs">
-      ${TABS.filter(([k]) => canAccess(k, currentEvent.id)).map(([k, label, ic]) => `<button class="tab ${k === currentTab ? 'active' : ''}" data-tab="${k}">${icon(ic, 15)} ${esc(t(label))}</button>`).join('')}
-      <div class="more-wrap hidden" id="more-wrap">
-        <button class="tab more-btn" id="more-btn">${esc(t('tab.more'))} <span class="more-caret">▾</span></button>
-        <div class="more-menu" id="more-menu"></div>
-      </div>
-    </div>
-    <div id="tab-body"><div class="loading">${esc(t('loading'))}</div></div>`;
+    <div class="event-layout">
+      <div id="tab-body"><div class="loading">${esc(t('loading'))}</div></div>
+      <nav class="nav-rail" id="ev-nav">${renderTabRail()}</nav>
+    </div>`;
 
   document.getElementById('back-btn').addEventListener('click', () => (location.hash = '#/'));
-  document.querySelectorAll('.tab').forEach((t2) =>
-    t2.addEventListener('click', () => {
-      location.hash = `#/event/${id}/${t2.dataset.tab}`;
-    })
-  );
-  bindMoreMenu();
-  applyTabOverflow();
+  bindTabRail();
   setupLangToggle();
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) logoutBtn.addEventListener('click', logout);
@@ -456,6 +456,8 @@ async function renderEventPage(id, tab) {
   if (usersBtn) usersBtn.addEventListener('click', usersModal);
   const pwBtn = document.getElementById('pw-btn');
   if (pwBtn) pwBtn.addEventListener('click', changePasswordModal);
+  const modulesBtn = document.getElementById('modules-btn');
+  if (modulesBtn) modulesBtn.addEventListener('click', modulesModal);
 
   if (!isAdmin()) {
     document.getElementById('edit-event-btn').style.display = 'none';
@@ -473,69 +475,41 @@ async function renderEventPage(id, tab) {
   renderEvent();
 }
 
-window.addEventListener('resize', () => applyTabOverflow());
-
-function bindMoreMenu() {
-  const wrap = document.getElementById('more-wrap');
-  const btn = document.getElementById('more-btn');
-  if (!wrap || !btn) return;
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    wrap.classList.toggle('open');
-  });
-  document.addEventListener('click', (e) => {
-    if (wrap.classList.contains('open') && !wrap.contains(e.target)) {
-      wrap.classList.remove('open');
-    }
-  });
+// Tabs shown in the rail: enabled for the event AND granted to the user.
+function eventFeatures() {
+  return (currentEvent && currentEvent.features) || [];
 }
 
-function applyTabOverflow() {
-  const wrap = document.getElementById('ev-tabs');
-  if (!wrap) return;
-  const more = document.getElementById('more-wrap');
-  if (!more) return;
-  const menu = document.getElementById('more-menu');
-  const tabs = Array.from(wrap.querySelectorAll(':scope > .tab'));
-  if (!tabs.length) { more.classList.add('hidden'); menu.innerHTML = ''; return; }
-  const margin = 14;
-  const full = wrap.clientWidth - margin;
-  let used = 0;
-  let firstHidden = -1;
-  for (let i = 0; i < tabs.length; i++) {
-    const w = tabs[i].offsetWidth;
-    if (used + w <= full) used += w;
-    else { firstHidden = i; break; }
-  }
-  if (firstHidden === -1) {
-    more.classList.add('hidden');
-    menu.innerHTML = '';
-    tabs.forEach((tb) => tb.classList.remove('overflow'));
-    return;
-  }
-  more.classList.remove('hidden');
-  const avail = wrap.clientWidth - more.offsetWidth - margin;
-  let hid = tabs.length;
-  used = 0;
-  for (let i = 0; i < tabs.length; i++) {
-    const w = tabs[i].offsetWidth;
-    if (used + w <= avail) used += w;
-    else { hid = i; break; }
-  }
-  let menuHtml = '';
-  tabs.forEach((tb, i) => {
-    const overflow = i >= hid;
-    tb.classList.toggle('overflow', overflow);
-    if (overflow) menuHtml += `<button class="more-tab ${tb.classList.contains('active') ? 'active' : ''}" data-tab="${tb.dataset.tab}">${tb.innerHTML}</button>`;
-  });
-  menu.innerHTML = menuHtml;
-  menu.querySelectorAll('.more-tab').forEach((bt) =>
-    bt.addEventListener('click', (e) => {
-      e.stopPropagation();
-      location.hash = `#/event/${currentEvent.id}/${bt.dataset.tab}`;
+function featureOn(tab) {
+  if (tab === 'overview') return true;
+  const f = eventFeatures();
+  return !f.length || f.includes(tab);
+}
+
+function visibleTabs() {
+  return TABS.filter(([k]) => featureOn(k) && canAccess(k, currentEvent.id)).map(([k]) => k);
+}
+
+function fallbackTab() {
+  const first = visibleTabs()[0];
+  return first || 'overview';
+}
+
+function renderTabRail() {
+  const tabs = visibleTabs();
+  const cur = currentTab;
+  return `<div class="nav-rail-inner">${tabs.length ? TABS.filter(([k]) => tabs.includes(k)).map(([k, label, ic]) =>
+    `<button class="nav-tab ${k === cur ? 'active' : ''}" data-tab="${k}">${icon(ic, 16)} <span>${esc(t(label))}</span></button>`
+  ).join('') : `<div class="nav-rail-empty">${esc(t('modules.none'))}</div>`}</div>`;
+}
+
+function bindTabRail() {
+  document.querySelectorAll('#ev-nav .nav-tab').forEach((tb) =>
+    tb.addEventListener('click', () => {
+      const k = tb.dataset.tab;
+      if (k !== currentTab) location.hash = `#/event/${currentEvent.id}/${k}`;
     })
   );
-  more.classList.remove('open');
 }
 
 function renderEvent() {
@@ -548,7 +522,7 @@ function renderEvent() {
   document.getElementById('ev-sub').innerHTML = sub.join('');
 
   const body = document.getElementById('tab-body');
-  const renderers = { overview: renderOverview, team: renderTeam, tasks: renderTasks, sponsors: renderSponsors, timeline: renderTimeline, files: renderFiles, finances: renderFinances, budget: renderBudget, design: renderDesign, participants: renderParticipants, guests: renderGuests };
+  const renderers = { overview: renderOverview, team: renderTeam, tasks: renderTasks, sponsors: renderSponsors, timeline: renderTimeline, files: renderFiles, finances: renderFinances, budget: renderBudget, design: renderDesign, participants: renderParticipants, guests: renderGuests, speakers: renderSpeakers, workshops: renderWorkshops, adventures: renderAdventures };
   body.innerHTML = `<div class="loading">${esc(t('loading'))}</div>`;
   renderers[currentTab]();
 }
@@ -1912,6 +1886,284 @@ function guestFormModal(item) {
   );
 }
 
+/* ---------- speakers ---------- */
+const S_STATUS = ['invited', 'confirmed', 'declined', 'attended'];
+const S_TITLES = ['keynote', 'panelist', 'mc', 'speaker', 'lecturer', 'other'];
+
+function renderSpeakers() {
+  const ev = currentEvent;
+  const list = ev.speakers || [];
+  document.getElementById('tab-body').innerHTML = `
+    <div class="section-head">
+      <h3>${esc(t('spk.count', { n: list.length }))}</h3>
+      <button class="btn btn-sm btn-primary" id="add-speaker">${icon('plus', 14)} ${esc(t('add.speaker'))}</button>
+    </div>
+    <div class="member-grid">
+      ${list.length ? list.map(speakerCard).join('') : emptyBlock('🎤', t('no.speakers'), t('no.speakers.sub'))}
+    </div>`;
+
+  if (canWriteTab('speakers', currentEvent.id)) document.getElementById('add-speaker').addEventListener('click', () => speakerFormModal());
+  else { const b = document.getElementById('add-speaker'); if (b) b.style.display = 'none'; }
+  bindRowActions('.member-card', 'member-actions');
+}
+
+function speakerCard(s) {
+  return `
+    <div class="card member-card" data-type="speakers" data-id="${s.id}">
+      <span class="avatar">${esc(initials(s.name))}</span>
+      <div class="member-info">
+        <div class="name">${esc(s.name)}</div>
+        <div><span class="status-badge status-${esc(s.status)}">${esc(t('g.' + s.status))}</span></div>
+        <div class="detail">
+          ${s.title ? `<span class="spk-role">${esc(t('spk.t.' + s.title))}</span>` : ''}
+          ${s.organization ? `<span>${esc(t('spk.organization'))}: ${esc(s.organization)}</span>` : ''}
+          ${s.topic ? `<span style="color:var(--muted)">${esc(t('spk.topic'))}: ${esc(s.topic)}</span>` : ''}
+        </div>
+      </div>
+      <div class="member-actions">
+        <button class="btn btn-ghost btn-icon" data-act="edit" title="${esc(t('edit'))}">${icon('pencil', 14)}</button>
+        <button class="btn btn-ghost btn-icon" data-act="del" title="${esc(t('delete'))}" style="color:var(--red)">${icon('trash', 14)}</button>
+      </div>
+    </div>`;
+}
+
+function speakerFormModal(item) {
+  const s = item || { name: '', title: '', organization: '', topic: '', contact: '', bio: '', status: 'invited', notes: '' };
+  openModal(`
+    <h3>${esc(t(item ? 'spk.edit' : 'spk.add'))}</h3>
+    <div class="form-grid">
+      <div class="field"><label>${esc(t('f.name'))}</label><input id="s-name" value="${esc(s.name)}" placeholder="${esc(t('ph.name'))}" /></div>
+      <div class="field"><label>${esc(t('spk.title'))}</label><select id="s-title">${S_TITLES.map((k) => `<option value="${k}" ${s.title === k ? 'selected' : ''}>${esc(t('spk.t.' + k))}</option>`).join('')}</select></div>
+      <div class="field"><label>${esc(t('spk.organization'))}</label><input id="s-org" value="${esc(s.organization)}" placeholder="${esc(t('spk.organizationPh'))}" /></div>
+      <div class="field"><label>${esc(t('spk.status'))}</label><select id="s-status">${S_STATUS.map((k) => `<option value="${k}" ${s.status === k ? 'selected' : ''}>${esc(t('g.' + k))}</option>`).join('')}</select></div>
+      <div class="field full"><label>${esc(t('spk.topic'))}</label><input id="s-topic" value="${esc(s.topic)}" placeholder="${esc(t('spk.topicPh'))}" /></div>
+      <div class="field full"><label>${esc(t('f.contact'))}</label><input id="s-contact" value="${esc(s.contact)}" placeholder="${esc(t('ph.phone'))}" /></div>
+      <div class="field full"><label>${esc(t('spk.bio'))}</label><textarea id="s-bio" rows="3">${esc(s.bio)}</textarea></div>
+      <div class="field full"><label>${esc(t('f.notes'))}</label><textarea id="s-notes" rows="2">${esc(s.notes)}</textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>${esc(t('cancel'))}</button>
+      <button class="btn btn-primary" id="s-save">${esc(t(item ? 'save.changes' : 'spk.add'))}</button>
+    </div>`,
+    {
+      onOpen(overlay) {
+        overlay.querySelector('#s-save').addEventListener('click', async () => {
+          const name = document.getElementById('s-name').value.trim();
+          if (!name) return toast(t('name.req'));
+          const body = {
+            name,
+            title: document.getElementById('s-title').value,
+            organization: document.getElementById('s-org').value.trim(),
+            status: document.getElementById('s-status').value,
+            topic: document.getElementById('s-topic').value.trim(),
+            contact: document.getElementById('s-contact').value.trim(),
+            bio: document.getElementById('s-bio').value.trim(),
+            notes: document.getElementById('s-notes').value.trim(),
+          };
+          if (item) await api.updateSpeaker(currentEvent.id, item.id, body);
+          else await api.addSpeaker(currentEvent.id, body);
+          currentEvent = await api.event(currentEvent.id);
+          toast(item ? t('spk.updated') : t('spk.added'));
+          closeModal();
+          renderSpeakers();
+        });
+      },
+    }
+  );
+}
+
+/* ---------- workshops ---------- */
+const WS_STATUS = ['planned', 'confirmed', 'cancelled', 'done'];
+
+function renderWorkshops() {
+  const ev = currentEvent;
+  const list = ev.workshops || [];
+  document.getElementById('tab-body').innerHTML = `
+    <div class="section-head">
+      <h3>${esc(t('ws.count', { n: list.length }))}</h3>
+      <button class="btn btn-sm btn-primary" id="add-ws">${icon('plus', 14)} ${esc(t('add.workshop'))}</button>
+    </div>
+    <div class="member-grid">
+      ${list.length ? list.map(workshopCard).join('') : emptyBlock('🧰', t('no.workshops'), t('no.workshops.sub'))}
+    </div>`;
+
+  if (canWriteTab('workshops', currentEvent.id)) document.getElementById('add-ws').addEventListener('click', () => workshopFormModal());
+  else { const b = document.getElementById('add-ws'); if (b) b.style.display = 'none'; }
+  bindRowActions('.member-card', 'member-actions');
+}
+
+function workshopCard(w) {
+  const when = [w.date ? fmtDate(w.date) : '', [w.time_start, w.time_end].filter(Boolean).join('–')].filter(Boolean).join(' · ');
+  return `
+    <div class="card member-card" data-type="workshops" data-id="${w.id}">
+      <span class="avatar">${icon('briefcase', 15)}</span>
+      <div class="member-info">
+        <div class="name">${esc(w.title)}</div>
+        <div><span class="status-badge status-${esc(w.status)}">${esc(t('ws.' + w.status))}</span>
+          ${w.host ? `<span class="spk-role">${esc(t('ws.host'))}: ${esc(w.host)}</span>` : ''}</div>
+        <div class="detail">
+          ${when ? `<span>${icon('clock', 13)} ${esc(when)}</span>` : ''}
+          ${w.location ? `<span>${icon('pin', 13)} ${esc(w.location)}</span>` : ''}
+          ${Number(w.capacity) > 0 ? `<span>${esc(t('ws.capacity'))}: ${esc(w.capacity)}</span>` : ''}
+        </div>
+        ${w.description ? `<div class="notes-line">${esc(w.description)}</div>` : ''}
+      </div>
+      <div class="member-actions">
+        <button class="btn btn-ghost btn-icon" data-act="edit" title="${esc(t('edit'))}">${icon('pencil', 14)}</button>
+        <button class="btn btn-ghost btn-icon" data-act="del" title="${esc(t('delete'))}" style="color:var(--red)">${icon('trash', 14)}</button>
+      </div>
+    </div>`;
+}
+
+function workshopFormModal(item) {
+  const w = item || { title: '', host: '', description: '', date: '', time_start: '', time_end: '', location: '', capacity: 0, status: 'planned', notes: '' };
+  const on = (v) => `<option value="${v}" ${w.status === v ? 'selected' : ''}>${esc(t('ws.' + v))}</option>`;
+  openModal(`
+    <h3>${esc(t(item ? 'ws.edit' : 'ws.add'))}</h3>
+    <div class="form-grid">
+      <div class="field full"><label>${esc(t('ws.title'))} *</label><input id="w-title" value="${esc(w.title)}" placeholder="${esc(t('ws.titlePh'))}" /></div>
+      <div class="field"><label>${esc(t('ws.host'))}</label><input id="w-host" value="${esc(w.host)}" placeholder="${esc(t('ws.hostPh'))}" /></div>
+      <div class="field"><label>${esc(t('ws.status'))}</label><select id="w-status">${WS_STATUS.map(on).join('')}</select></div>
+      <div class="field"><label>${esc(t('f.date'))}</label><input id="w-date" type="date" value="${esc(w.date)}" /></div>
+      <div class="field"><label>${esc(t('ws.timeStart'))}</label><input id="w-start" type="time" value="${esc(w.time_start)}" /></div>
+      <div class="field"><label>${esc(t('ws.timeEnd'))}</label><input id="w-end" type="time" value="${esc(w.time_end)}" /></div>
+      <div class="field"><label>${esc(t('ws.location'))}</label><input id="w-loc" value="${esc(w.location)}" placeholder="${esc(t('ph.location'))}" /></div>
+      <div class="field"><label>${esc(t('ws.capacity'))}</label><input id="w-cap" type="number" min="0" step="1" value="${esc(w.capacity)}" /></div>
+      <div class="field full"><label>${esc(t('f.desc'))}</label><textarea id="w-desc" rows="3">${esc(w.description)}</textarea></div>
+      <div class="field full"><label>${esc(t('f.notes'))}</label><textarea id="w-notes" rows="2">${esc(w.notes)}</textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>${esc(t('cancel'))}</button>
+      <button class="btn btn-primary" id="w-save">${esc(t(item ? 'save.changes' : 'ws.add'))}</button>
+    </div>`,
+    {
+      onOpen(overlay) {
+        overlay.querySelector('#w-save').addEventListener('click', async () => {
+          const title = document.getElementById('w-title').value.trim();
+          if (!title) return toast(t('ws.req'));
+          const body = {
+            title,
+            host: document.getElementById('w-host').value.trim(),
+            status: document.getElementById('w-status').value,
+            date: document.getElementById('w-date').value,
+            time_start: document.getElementById('w-start').value,
+            time_end: document.getElementById('w-end').value,
+            location: document.getElementById('w-loc').value.trim(),
+            capacity: document.getElementById('w-cap').value,
+            description: document.getElementById('w-desc').value.trim(),
+            notes: document.getElementById('w-notes').value.trim(),
+          };
+          if (item) await api.updateWorkshop(currentEvent.id, item.id, body);
+          else await api.addWorkshop(currentEvent.id, body);
+          currentEvent = await api.event(currentEvent.id);
+          toast(item ? t('ws.updated') : t('ws.added'));
+          closeModal();
+          renderWorkshops();
+        });
+      },
+    }
+  );
+}
+
+/* ---------- adventures (mini events) ---------- */
+const A_STATUS = ['planned', 'confirmed', 'cancelled', 'done'];
+const A_TYPES = ['activity', 'challenge', 'tour', 'quest', 'other'];
+
+function renderAdventures() {
+  const ev = currentEvent;
+  const list = ev.adventures || [];
+  const costTotal = list.reduce((a, x) => a + (Number(x.cost) || 0), 0);
+  document.getElementById('tab-body').innerHTML = `
+    <div class="section-head">
+      <h3>${esc(t('adv.count', { n: list.length }))}</h3>
+      <div style="display:flex;gap:10px;align-items:center;">
+        ${list.length ? `<span class="sec-count">${esc(t('adv.costTotal', { n: fmtMoney(costTotal) }))}</span>` : ''}
+        <button class="btn btn-sm btn-primary" id="add-adv">${icon('plus', 14)} ${esc(t('add.adventure'))}</button>
+      </div>
+    </div>
+    <div class="member-grid">
+      ${list.length ? list.map(adventureCard).join('') : emptyBlock('🧭', t('no.adventures'), t('no.adventures.sub'))}
+    </div>`;
+
+  if (canWriteTab('adventures', currentEvent.id)) document.getElementById('add-adv').addEventListener('click', () => adventureFormModal());
+  else { const b = document.getElementById('add-adv'); if (b) b.style.display = 'none'; }
+  bindRowActions('.member-card', 'member-actions');
+}
+
+function adventureCard(a) {
+  const when = [a.date ? fmtDate(a.date) : '', [a.time_start, a.time_end].filter(Boolean).join('–')].filter(Boolean).join(' · ');
+  return `
+    <div class="card member-card" data-type="adventures" data-id="${a.id}">
+      <span class="avatar">${icon('compass', 15)}</span>
+      <div class="member-info">
+        <div class="name">${esc(a.name)} <span class="cat-chip cat-chip-exp">${esc(t('adv.t.' + a.type))}</span></div>
+        <div><span class="status-badge status-${esc(a.status)}">${esc(t('ws.' + a.status))}</span>
+          ${Number(a.cost) > 0 ? `<span class="spk-role">${esc(fmtMoney(Number(a.cost)))}</span>` : ''}</div>
+        <div class="detail">
+          ${when ? `<span>${icon('clock', 13)} ${esc(when)}</span>` : ''}
+          ${a.location ? `<span>${icon('pin', 13)} ${esc(a.location)}</span>` : ''}
+          ${Number(a.capacity) > 0 ? `<span>${esc(t('ws.capacity'))}: ${esc(a.capacity)}</span>` : ''}
+        </div>
+        ${a.description ? `<div class="notes-line">${esc(a.description)}</div>` : ''}
+      </div>
+      <div class="member-actions">
+        <button class="btn btn-ghost btn-icon" data-act="edit" title="${esc(t('edit'))}">${icon('pencil', 14)}</button>
+        <button class="btn btn-ghost btn-icon" data-act="del" title="${esc(t('delete'))}" style="color:var(--red)">${icon('trash', 14)}</button>
+      </div>
+    </div>`;
+}
+
+function adventureFormModal(item) {
+  const a = item || { name: '', type: 'activity', description: '', date: '', time_start: '', time_end: '', location: '', cost: 0, capacity: 0, status: 'planned', notes: '' };
+  openModal(`
+    <h3>${esc(t(item ? 'adv.edit' : 'adv.add'))}</h3>
+    <div class="form-grid">
+      <div class="field"><label>${esc(t('adv.name'))} *</label><input id="a-name" value="${esc(a.name)}" placeholder="${esc(t('adv.namePh'))}" /></div>
+      <div class="field"><label>${esc(t('adv.type'))}</label><select id="a-type">${A_TYPES.map((k) => `<option value="${k}" ${a.type === k ? 'selected' : ''}>${esc(t('adv.t.' + k))}</option>`).join('')}</select></div>
+      <div class="field"><label>${esc(t('adv.status'))}</label><select id="a-status">${WS_STATUS.map((k) => `<option value="${k}" ${a.status === k ? 'selected' : ''}>${esc(t('ws.' + k))}</option>`).join('')}</select></div>
+      <div class="field"><label>${esc(t('f.date'))}</label><input id="a-date" type="date" value="${esc(a.date)}" /></div>
+      <div class="field"><label>${esc(t('ws.timeStart'))}</label><input id="a-start" type="time" value="${esc(a.time_start)}" /></div>
+      <div class="field"><label>${esc(t('ws.timeEnd'))}</label><input id="a-end" type="time" value="${esc(a.time_end)}" /></div>
+      <div class="field"><label>${esc(t('adv.cost'))}</label><input id="a-cost" type="number" min="0" step="0.01" value="${esc(a.cost)}" /></div>
+      <div class="field"><label>${esc(t('ws.capacity'))}</label><input id="a-cap" type="number" min="0" step="1" value="${esc(a.capacity)}" /></div>
+      <div class="field full"><label>${esc(t('adv.location'))}</label><input id="a-loc" value="${esc(a.location)}" placeholder="${esc(t('ph.location'))}" /></div>
+      <div class="field full"><label>${esc(t('f.desc'))}</label><textarea id="a-desc" rows="3">${esc(a.description)}</textarea></div>
+      <div class="field full"><label>${esc(t('f.notes'))}</label><textarea id="a-notes" rows="2">${esc(a.notes)}</textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>${esc(t('cancel'))}</button>
+      <button class="btn btn-primary" id="a-save">${esc(t(item ? 'save.changes' : 'adv.add'))}</button>
+    </div>`,
+    {
+      onOpen(overlay) {
+        overlay.querySelector('#a-save').addEventListener('click', async () => {
+          const name = document.getElementById('a-name').value.trim();
+          if (!name) return toast(t('adv.req'));
+          const body = {
+            name,
+            type: document.getElementById('a-type').value,
+            status: document.getElementById('a-status').value,
+            date: document.getElementById('a-date').value,
+            time_start: document.getElementById('a-start').value,
+            time_end: document.getElementById('a-end').value,
+            cost: document.getElementById('a-cost').value,
+            capacity: document.getElementById('a-cap').value,
+            location: document.getElementById('a-loc').value.trim(),
+            description: document.getElementById('a-desc').value.trim(),
+            notes: document.getElementById('a-notes').value.trim(),
+          };
+          if (item) await api.updateAdventure(currentEvent.id, item.id, body);
+          else await api.addAdventure(currentEvent.id, body);
+          currentEvent = await api.event(currentEvent.id);
+          toast(item ? t('adv.updated') : t('adv.added'));
+          closeModal();
+          renderAdventures();
+        });
+      },
+    }
+  );
+}
+
 /* ---------- event form ---------- */
 const EV_STATUS = ['upcoming', 'ongoing', 'completed', 'draft'];
 
@@ -2026,6 +2278,15 @@ function editByType(id) {
   } else if (tab === 'guests') {
     const g = currentEvent.guests.find((x) => x.id === id);
     if (g) guestFormModal(g);
+  } else if (tab === 'speakers') {
+    const s = currentEvent.speakers.find((x) => x.id === id);
+    if (s) speakerFormModal(s);
+  } else if (tab === 'workshops') {
+    const w = currentEvent.workshops.find((x) => x.id === id);
+    if (w) workshopFormModal(w);
+  } else if (tab === 'adventures') {
+    const a = currentEvent.adventures.find((x) => x.id === id);
+    if (a) adventureFormModal(a);
   }
 }
 
@@ -2059,6 +2320,15 @@ async function delByType(id) {
   } else if (tab === 'team') {
     currentEvent = await api.deleteMember(evId, id) ? (await api.event(evId)) : currentEvent;
     renderTeam();
+  } else if (tab === 'speakers') {
+    currentEvent = await api.deleteSpeaker(evId, id) ? (await api.event(evId)) : currentEvent;
+    renderSpeakers();
+  } else if (tab === 'workshops') {
+    currentEvent = await api.deleteWorkshop(evId, id) ? (await api.event(evId)) : currentEvent;
+    renderWorkshops();
+  } else if (tab === 'adventures') {
+    currentEvent = await api.deleteAdventure(evId, id) ? (await api.event(evId)) : currentEvent;
+    renderAdventures();
   }
   toast(t('deleted'));
 }
@@ -2068,15 +2338,62 @@ const ALL_TABS = [
   ['overview', 'tab.overview'],
   ['team', 'tab.team'],
   ['tasks', 'tab.tasks'],
-  ['finances', 'tab.finances'],
-  ['budget', 'tab.budget'],
+  ['timeline', 'tab.timeline'],
+  ['design', 'tab.design'],
+  ['speakers', 'tab.speakers'],
+  ['workshops', 'tab.workshops'],
+  ['adventures', 'tab.adventures'],
   ['participants', 'tab.participants'],
   ['guests', 'tab.guests'],
   ['sponsors', 'tab.sponsors'],
-  ['timeline', 'tab.timeline'],
-  ['design', 'tab.design'],
+  ['finances', 'tab.finances'],
+  ['budget', 'tab.budget'],
   ['files', 'tab.files'],
 ];
+
+/* ---------- modules modal (admin only, per-event feature toggles) ---------- */
+function modulesModal() {
+  if (!isAdmin()) return;
+  const current = eventFeatures();
+  const allOn = !current.length;
+  openModal(`
+    <h3>${icon('toggle', 16)} ${esc(t('modules'))}</h3>
+    <p class="modal-hint">${esc(t('modules.hint'))}</p>
+    <div class="module-grid">
+      ${MODULES.map((m) => {
+        const on = allOn || current.includes(m);
+        return `<label class="module-item ${on ? 'on' : ''}">
+          <input type="checkbox" data-module="${esc(m)}" ${on ? 'checked' : ''} />
+          <span class="module-name">${icon('spark', 13)} ${esc(t('tab.' + m))}</span>
+          <span class="switch"></span>
+        </label>`;
+      }).join('')}
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>${esc(t('cancel'))}</button>
+      <button class="btn btn-primary" id="mod-save">${esc(t('save'))}</button>
+    </div>`,
+    {
+      onOpen(overlay) {
+        overlay.querySelector('#mod-save').addEventListener('click', async () => {
+          const picked = [...overlay.querySelectorAll('input[data-module]:checked')].map((x) => x.dataset.module);
+          await api.updateEvent(currentEvent.id, { features: picked });
+          currentEvent = await api.event(currentEvent.id);
+          if (!featureOn(currentTab)) currentTab = fallbackTab();
+          closeModal();
+          const nav = document.getElementById('ev-nav');
+          if (nav) nav.innerHTML = renderTabRail();
+          bindTabRail();
+          if (location.hash !== `#/event/${currentEvent.id}/${currentTab}`) {
+            location.hash = `#/event/${currentEvent.id}/${currentTab}`;
+          } else {
+            renderEvent();
+          }
+        });
+      },
+    }
+  );
+}
 
 // Parse a user's stored permissions into { tab: "view" | "write" }.
 // Legacy arrays: viewer -> view, custom -> write.

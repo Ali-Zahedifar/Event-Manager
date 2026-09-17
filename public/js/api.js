@@ -60,6 +60,18 @@ const api = {
   updateGuest: (id, gid, body) => request('PUT', `/api/events/${id}/guests/${gid}`, body),
   deleteGuest: (id, gid) => request('DELETE', `/api/events/${id}/guests/${gid}`),
 
+  addSpeaker: (id, body) => request('POST', `/api/events/${id}/speakers`, body),
+  updateSpeaker: (id, sid, body) => request('PUT', `/api/events/${id}/speakers/${sid}`, body),
+  deleteSpeaker: (id, sid) => request('DELETE', `/api/events/${id}/speakers/${sid}`),
+
+  addWorkshop: (id, body) => request('POST', `/api/events/${id}/workshops`, body),
+  updateWorkshop: (id, wid, body) => request('PUT', `/api/events/${id}/workshops/${wid}`, body),
+  deleteWorkshop: (id, wid) => request('DELETE', `/api/events/${id}/workshops/${wid}`),
+
+  addAdventure: (id, body) => request('POST', `/api/events/${id}/adventures`, body),
+  updateAdventure: (id, aid, body) => request('PUT', `/api/events/${id}/adventures/${aid}`, body),
+  deleteAdventure: (id, aid) => request('DELETE', `/api/events/${id}/adventures/${aid}`),
+
   myTasks: () => request('GET', '/api/my-tasks'),
   assigneeUsers: () => request('GET', '/api/assignee-users'),
 };
