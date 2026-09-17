@@ -442,13 +442,14 @@ async function renderEventPage(id, tab) {
         <button class="btn btn-danger" id="del-event-btn">${icon('trash', 14)} ${esc(t('delete'))}</button>
       </div>
     </div>
-    <div class="event-layout">
-      <div id="tab-body"><div class="loading">${esc(t('loading'))}</div></div>
-      <nav class="nav-rail" id="ev-nav">${renderTabRail()}</nav>
-    </div>`;
+    <div class="tabs-strip-wrap">
+      <div class="tabs-strip" id="ev-nav">${renderTabStrip()}</div>
+    </div>
+    <div id="tab-body"><div class="loading">${esc(t('loading'))}</div></div>`;
 
   document.getElementById('back-btn').addEventListener('click', () => (location.hash = '#/'));
-  bindTabRail();
+  bindTabStrip();
+  scrollActiveTabIntoView();
   setupLangToggle();
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) logoutBtn.addEventListener('click', logout);
@@ -495,21 +496,26 @@ function fallbackTab() {
   return first || 'overview';
 }
 
-function renderTabRail() {
+function renderTabStrip() {
   const tabs = visibleTabs();
   const cur = currentTab;
-  return `<div class="nav-rail-inner">${tabs.length ? TABS.filter(([k]) => tabs.includes(k)).map(([k, label, ic]) =>
-    `<button class="nav-tab ${k === cur ? 'active' : ''}" data-tab="${k}">${icon(ic, 16)} <span>${esc(t(label))}</span></button>`
-  ).join('') : `<div class="nav-rail-empty">${esc(t('modules.none'))}</div>`}</div>`;
+  return `${tabs.length ? TABS.filter(([k]) => tabs.includes(k)).map(([k, label, ic]) =>
+    `<button class="tab-pill ${k === cur ? 'active' : ''}" data-tab="${k}">${icon(ic, 16)} <span>${esc(t(label))}</span></button>`
+  ).join('') : `<span class="tab-empty">${esc(t('modules.none'))}</span>`}`;
 }
 
-function bindTabRail() {
-  document.querySelectorAll('#ev-nav .nav-tab').forEach((tb) =>
+function bindTabStrip() {
+  document.querySelectorAll('#ev-nav .tab-pill').forEach((tb) =>
     tb.addEventListener('click', () => {
       const k = tb.dataset.tab;
       if (k !== currentTab) location.hash = `#/event/${currentEvent.id}/${k}`;
     })
   );
+}
+
+function scrollActiveTabIntoView() {
+  const active = document.querySelector('#ev-nav .tab-pill.active');
+  if (active) active.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
 }
 
 function renderEvent() {
@@ -2382,8 +2388,9 @@ function modulesModal() {
           if (!featureOn(currentTab)) currentTab = fallbackTab();
           closeModal();
           const nav = document.getElementById('ev-nav');
-          if (nav) nav.innerHTML = renderTabRail();
-          bindTabRail();
+          if (nav) nav.innerHTML = renderTabStrip();
+          bindTabStrip();
+          scrollActiveTabIntoView();
           if (location.hash !== `#/event/${currentEvent.id}/${currentTab}`) {
             location.hash = `#/event/${currentEvent.id}/${currentTab}`;
           } else {
