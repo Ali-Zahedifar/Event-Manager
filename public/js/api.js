@@ -45,6 +45,12 @@ const api = {
   addBudget: (id, body) => request('POST', `/api/events/${id}/budget`, body),
   updateBudget: (id, bid, body) => request('PUT', `/api/events/${id}/budget/${bid}`, body),
   deleteBudget: (id, bid) => request('DELETE', `/api/events/${id}/budget/${bid}`),
+  addLocation: (id, body) => request('POST', `/api/events/${id}/design/locations`, body),
+  updateLocation: (id, lid, body) => request('PUT', `/api/events/${id}/design/locations/${lid}`, body),
+  deleteLocation: (id, lid) => request('DELETE', `/api/events/${id}/design/locations/${lid}`),
+  addDesignPlan: (id, body) => request('POST', `/api/events/${id}/design/plans`, body),
+  updateDesignPlan: (id, pid, body) => request('PUT', `/api/events/${id}/design/plans/${pid}`, body),
+  deleteDesignPlan: (id, pid) => request('DELETE', `/api/events/${id}/design/plans/${pid}`),
 
   addParticipant: (id, body) => request('POST', `/api/events/${id}/participants`, body),
   updateParticipant: (id, pid, body) => request('PUT', `/api/events/${id}/participants/${pid}`, body),

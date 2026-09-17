@@ -124,6 +124,30 @@ db.exec(`
     created_at  TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS design_locations (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id   INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    address    TEXT DEFAULT '',
+    notes      TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS design_plans (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id     INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    location_id  INTEGER NOT NULL REFERENCES design_locations(id) ON DELETE CASCADE,
+    title        TEXT NOT NULL,
+    scenario     TEXT DEFAULT '',
+    description  TEXT DEFAULT '',
+    created_at   TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS participants (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -194,6 +218,25 @@ ensureColumn('transactions', 'file_name', "TEXT DEFAULT ''");
 ensureColumn('transactions', 'file_mime', "TEXT DEFAULT ''");
 ensureColumn('transactions', 'file_size', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('transactions', 'file_path', "TEXT DEFAULT ''");
+ensureColumn('budget_items', 'funding', "TEXT NOT NULL DEFAULT 'cash'");
+
+// One-time currency migration: existing amounts are stored in units of "million
+// tooman" (1 unit = 1,000,000 tooman). On first boot after this version they are
+// converted to plain tooman and a meta flag prevents the conversion from rerunning.
+const MONEY_SCALE_FLAG = 'money_scale_v1';
+if (db.prepare('SELECT value FROM meta WHERE key = ?').get(MONEY_SCALE_FLAG) === undefined) {
+  db.exec('BEGIN');
+  try {
+    db.exec('UPDATE transactions SET amount = amount * 1000000 WHERE amount <> 0');
+    db.exec('UPDATE budget_items SET amount = amount * 1000000 WHERE amount <> 0');
+    db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(MONEY_SCALE_FLAG, '1000000');
+    db.exec('COMMIT');
+    console.log('[MIGRATE] Currency converted: million tooman -> tooman (x1,000,000)');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+}
 
 // ---------- file storage helpers ----------
 const FILES_ROOT = path.join(DATA_ROOT, 'files');
@@ -405,6 +448,8 @@ function getEvent(id) {
   const files = db.prepare('SELECT * FROM files WHERE event_id = ? ORDER BY id').all(id);
   const finances = db.prepare('SELECT * FROM transactions WHERE event_id = ? ORDER BY date DESC, id DESC').all(id);
   const budgetItems = db.prepare('SELECT * FROM budget_items WHERE event_id = ? ORDER BY type, id').all(id);
+  const designLocations = db.prepare('SELECT * FROM design_locations WHERE event_id = ? ORDER BY id').all(id);
+  const designPlans = db.prepare('SELECT * FROM design_plans WHERE event_id = ? ORDER BY id').all(id);
   const participants = db.prepare('SELECT * FROM participants WHERE event_id = ? ORDER BY id').all(id);
   const guests = db.prepare('SELECT * FROM guests WHERE event_id = ? ORDER BY id').all(id);
 
@@ -426,7 +471,7 @@ function getEvent(id) {
     t.assignees = taskAssigneeStmt.all(t.id);
   }
 
-  return { ...ev, members, tasks, sponsors, timeline, files: files.map(scrubFile), finances: finances.map(scrubFinance), budget: budgetItems, participants, guests };
+  return { ...ev, members, tasks, sponsors, timeline, files: files.map(scrubFile), finances: finances.map(scrubFinance), budget: budgetItems, design: { locations: designLocations, plans: designPlans }, participants, guests };
 }
 
 function listEvents() {
@@ -746,16 +791,34 @@ function deleteFile(eventId, fileId) {
 }
 
 // ---------- finances ----------
+// Keep the budget in sync: a transaction category that has no budget line for the
+// same event+type is auto-created in the budget as a 0-amount line. The budget UI
+// groups these under "Undefined categories".
+function syncBudgetCategory(eventId, type, category) {
+  const cat = String(category ?? '').trim();
+  if (!cat) return null;
+  const exists = db.prepare(
+    `SELECT COUNT(*) AS c FROM budget_items WHERE event_id = ? AND type = ? AND LOWER(category) = LOWER(?)`
+  ).get(eventId, type, cat).c;
+  if (exists) return null;
+  const last = db.prepare(
+    `INSERT INTO budget_items (event_id, type, category, amount, notes, created_at) VALUES (?, ?, ?, 0, '', ?)`
+  ).run(eventId, type, cat, now());
+  return Number(last.lastInsertRowid);
+}
+
 function createFinance(eventId, data) {
   const saved = data.file ? saveFileBytes(eventId, data.file) : null;
+  const type = String(data.type === 'income' ? 'income' : 'expense');
+  const category = String(data.category ?? '');
   const r = db.prepare(
     `INSERT INTO transactions (event_id, type, title, amount, category, date, notes, file_name, file_mime, file_size, file_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     eventId,
-    String(data.type === 'income' ? 'income' : 'expense'),
+    type,
     String(data.title ?? '').trim() || 'Untitled',
     Number(data.amount) || 0,
-    String(data.category ?? ''),
+    category,
     String(data.date ?? ''),
     String(data.notes ?? ''),
     saved ? saved.name : '',
@@ -764,6 +827,7 @@ function createFinance(eventId, data) {
     saved ? saved.path : '',
     now()
   );
+  syncBudgetCategory(eventId, type, category);
   return scrubFinance(db.prepare('SELECT * FROM transactions WHERE id = ?').get(Number(r.lastInsertRowid)));
 }
 
@@ -774,6 +838,8 @@ function getFinance(eventId, financeId) {
 function updateFinance(eventId, financeId, data) {
   const f = db.prepare('SELECT * FROM transactions WHERE id = ? AND event_id = ?').get(financeId, eventId);
   if (!f) return null;
+  const type = String(data.type === 'income' ? 'income' : 'expense');
+  const category = String(data.category ?? f.category);
   let file_name = f.file_name, file_mime = f.file_mime, file_size = f.file_size, file_path = f.file_path;
   if (data.file_remove) {
     if (f.file_path) deleteStoredFile(f.file_path);
@@ -788,10 +854,10 @@ function updateFinance(eventId, financeId, data) {
   db.prepare(
     `UPDATE transactions SET type = ?, title = ?, amount = ?, category = ?, date = ?, notes = ?, file_name = ?, file_mime = ?, file_size = ?, file_path = ? WHERE id = ?`
   ).run(
-    String(data.type === 'income' ? 'income' : 'expense'),
+    type,
     String(data.title ?? f.title),
     Number(data.amount ?? f.amount) || 0,
-    String(data.category ?? f.category),
+    category,
     String(data.date ?? f.date),
     String(data.notes ?? f.notes),
     file_name,
@@ -800,6 +866,7 @@ function updateFinance(eventId, financeId, data) {
     file_path,
     financeId
   );
+  syncBudgetCategory(eventId, type, category);
   return scrubFinance(db.prepare('SELECT * FROM transactions WHERE id = ?').get(financeId));
 }
 
@@ -813,14 +880,16 @@ function deleteFinance(eventId, financeId) {
 
 // ---------- budget ----------
 function createBudgetItem(eventId, data) {
+  const funding = ['cash', 'sponsor', 'other'].includes(String(data.funding)) ? String(data.funding) : 'cash';
   const r = db.prepare(
-    `INSERT INTO budget_items (event_id, type, category, amount, notes, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO budget_items (event_id, type, category, amount, notes, funding, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(
     eventId,
     String(data.type === 'income' ? 'income' : 'expense'),
     String(data.category ?? '').trim(),
     Number(data.amount) || 0,
     String(data.notes ?? ''),
+    funding,
     now()
   );
   return db.prepare('SELECT * FROM budget_items WHERE id = ?').get(Number(r.lastInsertRowid));
@@ -829,13 +898,15 @@ function createBudgetItem(eventId, data) {
 function updateBudgetItem(eventId, itemId, data) {
   const b = db.prepare('SELECT * FROM budget_items WHERE id = ? AND event_id = ?').get(itemId, eventId);
   if (!b) return null;
+  const funding = ['cash', 'sponsor', 'other'].includes(String(data.funding)) ? String(data.funding) : b.funding;
   db.prepare(
-    `UPDATE budget_items SET type = ?, category = ?, amount = ?, notes = ? WHERE id = ?`
+    `UPDATE budget_items SET type = ?, category = ?, amount = ?, notes = ?, funding = ? WHERE id = ?`
   ).run(
     String(data.type === 'income' ? 'income' : 'expense'),
     String(data.category ?? b.category),
     Number(data.amount ?? b.amount) || 0,
     String(data.notes ?? b.notes),
+    funding,
     itemId
   );
   return db.prepare('SELECT * FROM budget_items WHERE id = ?').get(itemId);
@@ -845,6 +916,79 @@ function deleteBudgetItem(eventId, itemId) {
   const b = db.prepare('SELECT * FROM budget_items WHERE id = ? AND event_id = ?').get(itemId, eventId);
   if (!b) return false;
   db.prepare('DELETE FROM budget_items WHERE id = ?').run(itemId);
+  return true;
+}
+
+// ---------- design ----------
+function createDesignLocation(eventId, data) {
+  const r = db.prepare(
+    `INSERT INTO design_locations (event_id, name, address, notes, created_at) VALUES (?, ?, ?, ?, ?)`
+  ).run(
+    eventId,
+    String(data.name ?? '').trim() || 'Untitled',
+    String(data.address ?? ''),
+    String(data.notes ?? ''),
+    now()
+  );
+  return db.prepare('SELECT * FROM design_locations WHERE id = ?').get(Number(r.lastInsertRowid));
+}
+
+function updateDesignLocation(eventId, locId, data) {
+  const loc = db.prepare('SELECT * FROM design_locations WHERE id = ? AND event_id = ?').get(locId, eventId);
+  if (!loc) return null;
+  db.prepare('UPDATE design_locations SET name = ?, address = ?, notes = ? WHERE id = ?').run(
+    String(data.name ?? loc.name),
+    String(data.address ?? loc.address),
+    String(data.notes ?? loc.notes),
+    locId
+  );
+  return db.prepare('SELECT * FROM design_locations WHERE id = ?').get(locId);
+}
+
+function deleteDesignLocation(eventId, locId) {
+  const loc = db.prepare('SELECT * FROM design_locations WHERE id = ? AND event_id = ?').get(locId, eventId);
+  if (!loc) return false;
+  db.prepare('DELETE FROM design_locations WHERE id = ?').run(locId);
+  return true;
+}
+
+function createDesignPlan(eventId, data) {
+  const locId = Number(data.location_id) || null;
+  if (!locId || !db.prepare('SELECT 1 FROM design_locations WHERE id = ? AND event_id = ?').get(locId, eventId)) return null;
+  const r = db.prepare(
+    `INSERT INTO design_plans (event_id, location_id, title, scenario, description, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    eventId,
+    locId,
+    String(data.title ?? '').trim() || 'Untitled',
+    String(data.scenario ?? ''),
+    String(data.description ?? ''),
+    now()
+  );
+  return db.prepare('SELECT * FROM design_plans WHERE id = ?').get(Number(r.lastInsertRowid));
+}
+
+function updateDesignPlan(eventId, planId, data) {
+  const plan = db.prepare('SELECT * FROM design_plans WHERE id = ? AND event_id = ?').get(planId, eventId);
+  if (!plan) return null;
+  let locId = Number(data.location_id) || plan.location_id;
+  if (locId !== plan.location_id && !db.prepare('SELECT 1 FROM design_locations WHERE id = ? AND event_id = ?').get(locId, eventId)) {
+    locId = plan.location_id;
+  }
+  db.prepare('UPDATE design_plans SET location_id = ?, title = ?, scenario = ?, description = ? WHERE id = ?').run(
+    locId,
+    String(data.title ?? plan.title),
+    String(data.scenario ?? plan.scenario),
+    String(data.description ?? plan.description),
+    planId
+  );
+  return db.prepare('SELECT * FROM design_plans WHERE id = ?').get(planId);
+}
+
+function deleteDesignPlan(eventId, planId) {
+  const plan = db.prepare('SELECT * FROM design_plans WHERE id = ? AND event_id = ?').get(planId, eventId);
+  if (!plan) return false;
+  db.prepare('DELETE FROM design_plans WHERE id = ?').run(planId);
   return true;
 }
 
@@ -959,6 +1103,12 @@ module.exports = {
   createBudgetItem,
   updateBudgetItem,
   deleteBudgetItem,
+  createDesignLocation,
+  updateDesignLocation,
+  deleteDesignLocation,
+  createDesignPlan,
+  updateDesignPlan,
+  deleteDesignPlan,
   createParticipant,
   updateParticipant,
   deleteParticipant,

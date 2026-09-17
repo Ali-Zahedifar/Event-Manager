@@ -42,6 +42,7 @@ function icon(name, size = 16) {
     paperclip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 1 1-2.83-2.83l8.49-8.48"/>',
     more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
     wallet: '<path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2H6"/><path d="M16 3v4h4M12 12h4"/>',
+    palette: '<circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1-1.2 0-1.5-1.5-.44-1-2 0-2.5 1.5-.75 3.6-1.2 4-4.5.3-2.8 2.4-4 4-4s2.5 1 2.5-2.5C22.5 4.5 17.5 2 12 2z"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
     folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
     banknote: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/>',
@@ -396,6 +397,7 @@ const TABS = [
   ['guests', 'tab.guests', 'star'],
   ['sponsors', 'tab.sponsors', 'gift'],
   ['timeline', 'tab.timeline', 'clock'],
+  ['design', 'tab.design', 'palette'],
   ['files', 'tab.files', 'paperclip'],
 ];
 
@@ -546,7 +548,7 @@ function renderEvent() {
   document.getElementById('ev-sub').innerHTML = sub.join('');
 
   const body = document.getElementById('tab-body');
-  const renderers = { overview: renderOverview, team: renderTeam, tasks: renderTasks, sponsors: renderSponsors, timeline: renderTimeline, files: renderFiles, finances: renderFinances, budget: renderBudget, participants: renderParticipants, guests: renderGuests };
+  const renderers = { overview: renderOverview, team: renderTeam, tasks: renderTasks, sponsors: renderSponsors, timeline: renderTimeline, files: renderFiles, finances: renderFinances, budget: renderBudget, design: renderDesign, participants: renderParticipants, guests: renderGuests };
   body.innerHTML = `<div class="loading">${esc(t('loading'))}</div>`;
   renderers[currentTab]();
 }
@@ -1246,7 +1248,8 @@ function financeFormModal(item) {
       </select></div>
       <div class="field"><label>${esc(t('fin.amount'))} *</label><input id="f-amount" type="number" step="any" value="${esc(f.amount)}" placeholder="0" /></div>
       <div class="field"><label>${esc(t('f.title'))}</label><input id="f-title" value="${esc(f.title)}" placeholder="${esc(t('ph.fintitle'))}" /></div>
-      <div class="field"><label>${esc(t('f.category'))}</label><input id="f-category" value="${esc(f.category)}" placeholder="${esc(t('ph.fincat'))}" list="fin-cat-list" /></div>
+      <div class="field"><label>${esc(t('f.category'))}</label><select id="f-category"><option value="">— ${esc(t('fin.noCategory'))} —</option><option value="__custom">${esc(t('fin.newCategory'))}</option></select>
+      <input id="f-cat-new" style="display:none;margin-top:8px" placeholder="${esc(t('ph.fincat'))}" /></div>
       <div class="field full"><label>${esc(t('f.date'))}</label><input id="f-date" type="date" value="${esc(f.date)}" /></div>
       <div class="field full"><label>${esc(t('f.notes'))}</label><textarea id="f-notes">${esc(f.notes)}</textarea></div>
       <div class="field full"><label>${esc(t('fin.file'))}</label>
@@ -1267,13 +1270,42 @@ function financeFormModal(item) {
     </div>`,
     {
       onOpen(overlay) {
-        const cats = [...new Set((currentEvent.finances || []).map((x) => x.category).filter(Boolean))];
-        if (cats.length) {
-          const dl = document.createElement('datalist');
-          dl.id = 'fin-cat-list';
-          cats.forEach((c) => { const o = document.createElement('option'); o.value = c; dl.appendChild(o); });
-          document.body.appendChild(dl);
+        const catSel = overlay.querySelector('#f-category');
+        const catNew = overlay.querySelector('#f-cat-new');
+        const typeSel = overlay.querySelector('#f-type');
+        const budgetCats = [...new Set((currentEvent.budget || [])
+          .filter((b) => b.type === (typeSel.value === 'income' ? 'income' : 'expense'))
+          .map((b) => String(b.category || '').trim())
+          .filter(Boolean))];
+        budgetCats.forEach((c) => {
+          const o = document.createElement('option');
+          o.value = c;
+          o.textContent = c;
+          catSel.appendChild(o);
+        });
+        if (item && item.category) {
+          if (budgetCats.includes(item.category)) catSel.value = item.category;
+          else { catSel.value = '__custom'; catNew.value = item.category; catNew.style.display = 'block'; }
         }
+        const showCustom = () => { catNew.style.display = catSel.value === '__custom' ? 'block' : 'none'; };
+        catSel.addEventListener('change', showCustom);
+        typeSel.addEventListener('change', () => {
+          const opts = [...new Set((currentEvent.budget || [])
+            .filter((b) => b.type === (typeSel.value === 'income' ? 'income' : 'expense'))
+            .map((b) => String(b.category || '').trim())
+            .filter(Boolean))];
+          const keep = catSel.value;
+          catSel.querySelectorAll('option').forEach((o) => { if (o.value && o.value !== '__custom') o.remove(); });
+          opts.forEach((c) => {
+            const o = document.createElement('option');
+            o.value = c;
+            o.textContent = c;
+            catSel.appendChild(o);
+          });
+          if (keep && !opts.includes(keep) && keep !== '__custom' && keep !== '') { catSel.value = '__custom'; catNew.value = keep; }
+          showCustom();
+        });
+        showCustom();
         const pick = overlay.querySelector('#f-pick');
         const input = overlay.querySelector('#f-file');
         const info = overlay.querySelector('#f-file-info');
@@ -1300,7 +1332,7 @@ function financeFormModal(item) {
             type: document.getElementById('f-type').value,
             title: document.getElementById('f-title').value,
             amount: document.getElementById('f-amount').value,
-            category: document.getElementById('f-category').value,
+            category: document.getElementById('f-category').value === '__custom' ? document.getElementById('f-cat-new').value.trim() : document.getElementById('f-category').value,
             date: document.getElementById('f-date').value,
             notes: document.getElementById('f-notes').value,
           };
@@ -1345,6 +1377,8 @@ function renderBudget() {
   const plannedExp = expItems.reduce((a, i) => a + (Number(i.amount) || 0), 0);
   const actualInc = (ev.finances || []).filter((t) => t.type === 'income').reduce((a, t) => a + (Number(t.amount) || 0), 0);
   const actualExp = (ev.finances || []).filter((t) => t.type === 'expense').reduce((a, t) => a + (Number(t.amount) || 0), 0);
+  const cashNeed = expItems.filter((i) => (i.funding || 'cash') === 'cash').reduce((a, i) => a + (Number(i.amount) || 0), 0);
+  const coveredExp = expItems.filter((i) => (i.funding || 'cash') !== 'cash').reduce((a, i) => a + (Number(i.amount) || 0), 0);
   const writable = canWriteTab('budget', ev.id);
   const isIncome = budgetSub === 'income';
   const activeItems = isIncome ? incItems : expItems;
@@ -1392,6 +1426,12 @@ function renderBudget() {
         <span class="fin-summary-value">${esc(fmtMoney(plannedInc - plannedExp))}</span>
         <span class="fin-summary-sub">${esc(t('bud.planned'))}</span>
       </div>
+      <div class="fin-summary-card">
+        <span class="fin-summary-icon ic-cash">${icon('banknote', 15)}</span>
+        <span class="fin-summary-label">${esc(t('bud.cashNeed'))}</span>
+        <span class="fin-summary-value">${esc(fmtMoney(cashNeed))}</span>
+        <span class="fin-summary-sub">${esc(t('bud.cashNeedSub', { n: fmtMoney(coveredExp) }))}</span>
+      </div>
     </div>
     ${budgetTable(activeItems, activeActual, isIncome, writable)}
   `;
@@ -1409,44 +1449,56 @@ function budgetTable(items, actualTotal, isIncome, writable) {
     return `<div class="empty-block">${icon('wallet', 26)}<p>${esc(t('bud.empty'))}</p></div>`;
   }
   const catLabels = BUDGET_CAT_KEYS[isIncome ? 'income' : 'expense'];
-  const activeCat = catLabels[0];
+  const presets = new Set(catLabels.map((k) => t('bud.cat.' + k).toLowerCase()));
   const actualByCat = budgetActualByCat(isIncome ? 'income' : 'expense');
   const coveredKeys = new Set(items.map((i) => String(i.category || '').trim().toLowerCase()).filter(Boolean));
   let coveredActual = 0;
   coveredKeys.forEach((k) => { coveredActual += actualByCat[k] || 0; });
-  let rows = '';
-  items.forEach((it) => {
+
+  const row = (it) => {
     const cat = String(it.category || '').trim() || '';
     const catKey = cat.toLowerCase();
     const actual = actualByCat[catKey] || 0;
     const delta = actual - (Number(it.amount) || 0);
-    const dn = icon('edit', 13);
-    const dl = icon('trash', 13);
-    rows += `
+    const funding = it.funding || 'cash';
+    const fundChip = isIncome ? '' : `<span class="fund-chip fc-${esc(funding)}">${esc(t('bud.fund.' + funding))}</span>`;
+    const actions = writable
+      ? `<button class="btn btn-ghost btn-icon" data-act="edit" title="${esc(t('edit'))}">${icon('edit', 13)}</button>
+         <button class="btn btn-ghost btn-icon" data-act="del" title="${esc(t('delete'))}">${icon('trash', 13)}</button>`
+      : '';
+    return `
       <tr class="budget-row" data-id="${it.id}">
         <td><span class="cat-chip cat-chip-${isIncome ? 'inc' : 'exp'}">${esc(cat || t('bud.misc'))}</span></td>
+        ${isIncome ? '' : `<td>${fundChip}</td>`}
         <td class="budget-planned">${esc(fmtMoney(Number(it.amount) || 0))}</td>
         <td class="budget-actual">${esc(fmtMoney(actual))}</td>
         <td class="${delta >= 0 ? 'am-in' : 'am-out'}">${esc(delta >= 0 ? '+' : '−')}${esc(fmtMoney(Math.abs(delta)))}</td>
         <td class="budget-notes">${esc(it.notes || '')}</td>
-        <td>
-          ${writable ? `<button class="btn btn-ghost btn-icon" data-act="edit" title="${esc(t('edit'))}">${dn}</button>
-          <button class="btn btn-ghost btn-icon" data-act="del" title="${esc(t('delete'))}">${dl}</button>` : ''}
-        </td>
+        <td>${actions}</td>
       </tr>`;
+  };
+  const presetRows = [];
+  const undefinedRows = [];
+  items.forEach((it) => {
+    const cat = String(it.category || '').trim().toLowerCase();
+    (cat && !presets.has(cat) ? undefinedRows : presetRows).push(it);
   });
+  let body = '';
+  if (presetRows.length) body += `<tr class="bgt-group"><td colspan="6">${esc(t('bud.presets'))}</td></tr>${presetRows.map(row).join('')}`;
+  if (undefinedRows.length) body += `<tr class="bgt-group bgt-group-undefined"><td colspan="6">${esc(t('bud.undefined'))}</td></tr>${undefinedRows.map(row).join('')}`;
   let unbudgeted = '';
   if (actualTotal > coveredActual + 0.001) {
     unbudgeted = `<div class="budget-unbudgeted">${esc(t('bud.unbudgeted', { n: fmtMoney(actualTotal - coveredActual) }))}</div>`;
   }
+  const sourceHead = isIncome ? '' : `<th>${esc(t('bud.source'))}</th>`;
   return `
     <div class="section-subhead"><h3>${esc(t(isIncome ? 'bud.income' : 'bud.expense'))}</h3></div>
     <div class="table-wrap">
       <table class="data-table budget-table">
         <thead>
-          <tr><th>${esc(t('fin.category'))}</th><th>${esc(t('bud.planned'))}</th><th>${esc(t('bud.actual'))}</th><th>${esc(t('bud.delta'))}</th><th>${esc(t('notes'))}</th><th></th></tr>
+          <tr><th>${esc(t('fin.category'))}</th>${sourceHead}<th>${esc(t('bud.planned'))}</th><th>${esc(t('bud.actual'))}</th><th>${esc(t('bud.delta'))}</th><th>${esc(t('notes'))}</th><th></th></tr>
         </thead>
-        <tbody>${rows}</tbody>
+        <tbody>${body}</tbody>
       </table>
     </div>
     ${unbudgeted}`;
@@ -1486,6 +1538,11 @@ function budgetFormModal(item) {
       <div class="field"><label>${esc(t('fin.category'))}</label><input id="b-cat" list="b-cat-list" placeholder="${esc(t('bud.customCat'))}" value="${esc(item ? item.category || '' : t('bud.cat.' + catKeys[0]))}">
       <datalist id="b-cat-list">${datalist}</datalist></div>
       <div class="field"><label>${esc(t('bud.amount'))} *</label><input id="b-amount" type="number" min="0" step="0.01" value="${esc(item ? item.amount : '')}" placeholder="0" /></div>
+      <div class="field" id="b-funding-wrap" ${isIncome ? 'style="display:none"' : ''}><label>${esc(t('bud.funding'))}</label><select id="b-funding">
+        <option value="cash" ${item && item.funding === 'cash' ? 'selected' : ''}>${esc(t('bud.fund.cash'))}</option>
+        <option value="sponsor" ${item && item.funding === 'sponsor' ? 'selected' : ''}>${esc(t('bud.fund.sponsor'))}</option>
+        <option value="other" ${item && item.funding === 'other' ? 'selected' : ''}>${esc(t('bud.fund.other'))}</option>
+      </select></div>
       <div class="field full"><label>${esc(t('bud.notes'))}</label><input id="b-notes" value="${esc(item ? item.notes : '')}" placeholder="${esc(t('bud.notesPh'))}" /></div>
     </div>
     <div class="modal-actions">
@@ -1496,10 +1553,12 @@ function budgetFormModal(item) {
       onOpen(overlay) {
         const typeSel = overlay.querySelector('#b-type');
         const dl = overlay.querySelector('#b-cat-list');
+        const fundWrap = overlay.querySelector('#b-funding-wrap');
         typeSel.addEventListener('change', () => {
           const t = typeSel.value;
           const keys = BUDGET_CAT_KEYS[t === 'income' ? 'income' : 'expense'];
           dl.innerHTML = keys.map((k) => `<option value="${esc(t('bud.cat.' + k))}">`).join('');
+          if (fundWrap) fundWrap.style.display = t === 'income' ? 'none' : 'block';
         });
         overlay.querySelector('#b-save').addEventListener('click', async () => {
           const type = overlay.querySelector('#b-type').value;
@@ -1507,13 +1566,184 @@ function budgetFormModal(item) {
           const amount = Number(overlay.querySelector('#b-amount').value);
           if (!(amount > 0)) return toast(t('bud.req'));
           const notes = overlay.querySelector('#b-notes').value.trim();
-          const body = { type, category, amount, notes };
+          const funding = overlay.querySelector('#b-funding') ? overlay.querySelector('#b-funding').value : 'cash';
+          const body = { type, category, amount, notes, funding };
           const evId = currentEvent.id;
           if (item) await api.updateBudget(evId, item.id, body);
           else await api.addBudget(evId, body);
           currentEvent = await api.event(evId);
           closeModal();
           renderBudget();
+        });
+      },
+    }
+  );
+}
+
+/* ---------- design ---------- */
+function renderDesign() {
+  const ev = currentEvent;
+  const des = ev.design || { locations: [], plans: [] };
+  const locations = des.locations || [];
+  const plans = des.plans || [];
+  const writable = canWriteTab('design', ev.id);
+  document.getElementById('tab-body').innerHTML = `
+    <div class="section-head">
+      <h3>${esc(t('design.count', { n: locations.length }))}</h3>
+      ${writable ? `<button class="btn btn-sm btn-primary" id="add-loc">${icon('plus', 14)} ${esc(t('design.addLoc'))}</button>` : ''}
+    </div>
+    <div class="design-grid">
+      ${locations.length ? locations.map((loc) => {
+        const locPlans = plans.filter((p) => p.location_id === loc.id);
+        return `
+        <div class="card design-loc" data-id="${loc.id}">
+          <div class="design-loc-head">
+            <div class="design-loc-title">
+              <span class="design-loc-ic">${icon('pin', 15)}</span>
+              <div>
+                <div class="design-loc-name">${esc(loc.name)}</div>
+                ${loc.address || loc.notes ? `<div class="design-loc-meta">${esc([loc.address, loc.notes].filter(Boolean).join(' · '))}</div>` : ''}
+              </div>
+            </div>
+            <div class="design-loc-actions">
+              ${writable ? `<button class="btn btn-ghost btn-icon" data-act="edit" title="${esc(t('edit'))}">${icon('pencil', 14)}</button>
+              <button class="btn btn-ghost btn-icon" data-act="del" title="${esc(t('delete'))}" style="color:var(--red)">${icon('trash', 14)}</button>` : ''}
+            </div>
+          </div>
+          <div class="design-plans">
+            ${locPlans.length ? locPlans.map((p) => `
+              <div class="design-plan" data-id="${p.id}" data-loc="${loc.id}">
+                <div class="design-plan-main">
+                  <div class="design-plan-title">${esc(p.title)}</div>
+                  ${p.scenario ? `<div class="design-plan-sc">${icon('spark', 12)} ${esc(p.scenario)}</div>` : ''}
+                  ${p.description ? `<div class="design-plan-desc">${esc(p.description)}</div>` : ''}
+                </div>
+                ${writable ? `<div class="design-plan-actions">
+                  <button class="btn btn-ghost btn-icon" data-act="edit" title="${esc(t('edit'))}">${icon('pencil', 13)}</button>
+                  <button class="btn btn-ghost btn-icon" data-act="del" title="${esc(t('delete'))}" style="color:var(--red)">${icon('trash', 13)}</button>
+                </div>` : ''}
+              </div>`).join('') : `<div class="design-empty">${esc(t('design.noPlans'))}</div>`}
+            ${writable ? `<button class="btn btn-sm btn-ghost add-plan" data-loc="${loc.id}">${icon('plus', 13)} ${esc(t('design.addPlan'))}</button>` : ''}
+          </div>
+        </div>`;
+      }).join('') : `<div class="empty-block">${icon('palette', 26)}<p>${esc(t('design.empty'))}</p><p class="empty-sub">${esc(t('design.empty.sub'))}</p></div>`}
+    </div>`;
+
+  if (writable) {
+    const addLoc = document.getElementById('add-loc');
+    if (addLoc) addLoc.addEventListener('click', () => designLocationModal());
+    document.querySelectorAll('.add-plan').forEach((b) => b.addEventListener('click', () => {
+      const locId = Number(b.dataset.loc);
+      const loc = (des.locations || []).find((l) => l.id === locId);
+      if (loc) designPlanModal(null, loc);
+    }));
+  }
+  bindDesignActions(writable);
+}
+
+function bindDesignActions(writable) {
+  document.querySelectorAll('.design-loc').forEach((card) => {
+    const id = Number(card.dataset.id);
+    card.querySelectorAll(':scope > .design-loc-head [data-act]').forEach((btn) => {
+      if ((btn.dataset.act === 'edit' || btn.dataset.act === 'del') && !writable) { btn.remove(); return; }
+      btn.addEventListener('click', () => {
+        const loc = (currentEvent.design || { locations: [] }).locations.find((l) => l.id === id);
+        if (btn.dataset.act === 'edit' && loc) designLocationModal(loc);
+        else if (btn.dataset.act === 'del') confirmDialog(t('confirm.delete'), t('confirm.delete.msg'), async () => {
+          currentEvent = await api.deleteLocation(currentEvent.id, id) ? (await api.event(currentEvent.id)) : currentEvent;
+          renderDesign();
+        }, t('delete'));
+      });
+    });
+  });
+  document.querySelectorAll('.design-plan').forEach((row) => {
+    const id = Number(row.dataset.id);
+    const locId = Number(row.dataset.loc);
+    row.querySelectorAll('[data-act]').forEach((btn) => {
+      if ((btn.dataset.act === 'edit' || btn.dataset.act === 'del') && !writable) { btn.remove(); return; }
+      btn.addEventListener('click', () => {
+        const plan = (currentEvent.design || { plans: [] }).plans.find((p) => p.id === id);
+        const loc = (currentEvent.design || { locations: [] }).locations.find((l) => l.id === locId);
+        if (btn.dataset.act === 'edit' && plan) designPlanModal(plan, loc);
+        else if (btn.dataset.act === 'del') confirmDialog(t('confirm.delete'), t('confirm.delete.msg'), async () => {
+          currentEvent = await api.deleteDesignPlan(currentEvent.id, id) ? (await api.event(currentEvent.id)) : currentEvent;
+          renderDesign();
+        }, t('delete'));
+      });
+    });
+  });
+}
+
+function designLocationModal(item) {
+  const loc = item || { name: '', address: '', notes: '' };
+  openModal(
+    `<h3>${esc(t(item ? 'design.editLoc' : 'design.addLoc'))}</h3>
+    <div class="form-grid">
+      <div class="field full"><label>${esc(t('design.locName'))} *</label><input id="d-name" value="${esc(loc.name)}" placeholder="${esc(t('design.locNamePh'))}" /></div>
+      <div class="field full"><label>${esc(t('design.address'))}</label><input id="d-address" value="${esc(loc.address)}" placeholder="${esc(t('design.addressPh'))}" /></div>
+      <div class="field full"><label>${esc(t('notes'))}</label><input id="d-notes" value="${esc(loc.notes)}" placeholder="${esc(t('design.notesPh'))}" /></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>${esc(t('cancel'))}</button>
+      <button class="btn btn-primary" id="d-save">${esc(t(item ? 'save.changes' : 'design.addLoc'))}</button>
+    </div>`,
+    {
+      onOpen(overlay) {
+        overlay.querySelector('#d-save').addEventListener('click', async () => {
+          const name = overlay.querySelector('#d-name').value.trim();
+          if (!name) return toast(t('design.nameReq'));
+          const body = {
+            name,
+            address: overlay.querySelector('#d-address').value.trim(),
+            notes: overlay.querySelector('#d-notes').value.trim(),
+          };
+          const evId = currentEvent.id;
+          if (item) await api.updateLocation(evId, item.id, body);
+          else await api.addLocation(evId, body);
+          currentEvent = await api.event(evId);
+          closeModal();
+          renderDesign();
+        });
+      },
+    }
+  );
+}
+
+function designPlanModal(item, loc) {
+  const plan = item || { title: '', scenario: '', description: '', location_id: loc ? loc.id : 0 };
+  const des = currentEvent.design || { locations: [] };
+  const locOptions = (des.locations || []).map((l) => `<option value="${l.id}" ${plan.location_id === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
+  openModal(
+    `<h3>${esc(t(item ? 'design.editPlan' : 'design.addPlan'))}</h3>
+    <div class="form-grid">
+      <div class="field full"><label>${esc(t('design.planTitle'))} *</label><input id="p-title" value="${esc(plan.title)}" placeholder="${esc(t('design.planTitlePh'))}" /></div>
+      <div class="field"><label>${esc(t('design.location'))}</label><select id="p-loc"><option value="">— ${esc(t('design.noLoc'))} —</option>${locOptions}</select></div>
+      <div class="field"><label>${esc(t('design.scenario'))}</label><input id="p-scenario" value="${esc(plan.scenario)}" placeholder="${esc(t('design.scenarioPh'))}" /></div>
+      <div class="field full"><label>${esc(t('design.desc'))}</label><textarea id="p-desc" rows="4">${esc(plan.description)}</textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-close>${esc(t('cancel'))}</button>
+      <button class="btn btn-primary" id="p-save">${esc(t(item ? 'save.changes' : 'design.addPlan'))}</button>
+    </div>`,
+    {
+      onOpen(overlay) {
+        overlay.querySelector('#p-save').addEventListener('click', async () => {
+          const title = overlay.querySelector('#p-title').value.trim();
+          if (!title) return toast(t('design.titleReq'));
+          const locId = Number(overlay.querySelector('#p-loc').value);
+          if (!locId) return toast(t('design.locReq'));
+          const body = {
+            location_id: locId,
+            title,
+            scenario: overlay.querySelector('#p-scenario').value.trim(),
+            description: overlay.querySelector('#p-desc').value.trim(),
+          };
+          const evId = currentEvent.id;
+          if (item) await api.updateDesignPlan(evId, item.id, body);
+          else await api.addDesignPlan(evId, body);
+          currentEvent = await api.event(evId);
+          closeModal();
+          renderDesign();
         });
       },
     }
@@ -1844,6 +2074,7 @@ const ALL_TABS = [
   ['guests', 'tab.guests'],
   ['sponsors', 'tab.sponsors'],
   ['timeline', 'tab.timeline'],
+  ['design', 'tab.design'],
   ['files', 'tab.files'],
 ];
 

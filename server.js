@@ -239,6 +239,7 @@ const TAB_MAP = {
   files: 'files',
   finances: 'finances',
   budget: 'budget',
+  design: 'design',
   participants: 'participants',
   guests: 'guests',
 };
@@ -621,6 +622,50 @@ async function handleApi(req, res, pathname) {
       }
     }
     return sendError(res, 405, 'Method not allowed');
+  }
+
+  // /api/events/:id/design (locations + plans)
+  if (parsed.params.tail && parsed.params.tail[0] === 'design') {
+    const sub = parsed.params.tail[1];
+    const subId = idOf(parsed.params.tail, 2);
+    if (sub === 'locations') {
+      if (method === 'POST' && !subId) {
+        if (!canWrite(user, eventId, 'design')) return sendError(res, 403, 'No permission');
+        return sendJson(res, 201, dbm.createDesignLocation(eventId, await readBody(req)));
+      }
+      if (subId) {
+        if (method === 'PUT') {
+          if (!canWrite(user, eventId, 'design')) return sendError(res, 403, 'No permission');
+          const loc = dbm.updateDesignLocation(eventId, subId, await readBody(req));
+          return loc ? sendJson(res, 200, loc) : notFound(res);
+        }
+        if (method === 'DELETE') {
+          if (!canWrite(user, eventId, 'design')) return sendError(res, 403, 'No permission');
+          return dbm.deleteDesignLocation(eventId, subId) ? sendJson(res, 200, { ok: true }) : notFound(res);
+        }
+      }
+      return sendError(res, 405, 'Method not allowed');
+    }
+    if (sub === 'plans') {
+      if (method === 'POST' && !subId) {
+        if (!canWrite(user, eventId, 'design')) return sendError(res, 403, 'No permission');
+        const plan = dbm.createDesignPlan(eventId, await readBody(req));
+        return plan ? sendJson(res, 201, plan) : sendError(res, 400, 'Invalid location');
+      }
+      if (subId) {
+        if (method === 'PUT') {
+          if (!canWrite(user, eventId, 'design')) return sendError(res, 403, 'No permission');
+          const plan = dbm.updateDesignPlan(eventId, subId, await readBody(req));
+          return plan ? sendJson(res, 200, plan) : notFound(res);
+        }
+        if (method === 'DELETE') {
+          if (!canWrite(user, eventId, 'design')) return sendError(res, 403, 'No permission');
+          return dbm.deleteDesignPlan(eventId, subId) ? sendJson(res, 200, { ok: true }) : notFound(res);
+        }
+      }
+      return sendError(res, 405, 'Method not allowed');
+    }
+    return sendError(res, 404, 'Not found');
   }
 
   // /api/events/:id/participants
