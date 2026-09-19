@@ -2174,6 +2174,352 @@ function adventureFormModal(item) {
   );
 }
 
+/* ---------- shows (run of show) ---------- */
+const SHOW_STATUS = ['planned', 'confirmed', 'cancelled', 'done'];
+const SHOW_TYPES = ['live', 'opening', 'closing', 'ceremony', 'other'];
+
+function showLocationName(locationId) {
+  if (!locationId) return '';
+  const loc = ((currentEvent.design && currentEvent.design.locations) || []).find((l) => l.id === Number(locationId));
+  return loc ? loc.name : '';
+}
+
+function renderShows() {
+  const ev = currentEvent;
+  const list = ev.shows || [];
+  const costTotal = list.reduce((a, x) => a + (Number(x.cost) || 0), 0);
+  const segTotal = list.reduce((a, x) => a + (x.segments || []).length, 0);
+  document.getElementById('tab-body').innerHTML = `
+    <div class="section-head">
+      <h3>${esc(t('shows.count', { n: list.length }))}</h3>
+      <div style="display:flex;gap:10px;align-items:center;">
+        ${list.length ? `<span class="sec-count">${esc(t('shows.meta', { s: segTotal, c: fmtMoney(costTotal) }))}</span>` : ''}
+        <button class="btn btn-sm btn-primary" id="add-show">${icon('plus', 14)} ${esc(t('add.show'))}</button>
+      </div>
+    </div>
+    <div class="member-grid">
+      ${list.length ? list.map(showCard).join('') : emptyBlock('🎬', t('no.shows'), t('no.shows.sub'))}
+    </div>`;
+
+  if (canWriteTab('shows', currentEvent.id)) document.getElementById('add-show').addEventListener('click', () => showFormModal());
+  else { const b = document.getElementById('add-show'); if (b) b.style.display = 'none'; }
+  bindRowActions('.member-card', 'member-actions');
+}
+
+function showCard(s) {
+  const when = [s.date ? fmtDate(s.date) : '', [s.time_start, s.time_end].filter(Boolean).join('–')].filter(Boolean).join(' · ');
+  const venue = showLocationName(s.location_id) || s.venue;
+  const segs = s.segments || [];
+  const eq = s.equipment || [];
+  return `
+    <div class="card member-card" data-type="shows" data-id="${s.id}">
+      <span class="avatar">${icon('video', 15)}</span>
+      <div class="member-info">
+        <div class="name">${esc(s.name)} <span class="cat-chip cat-chip-exp">${esc(t('show.t.' + s.type))}</span></div>
+        <div><span class="status-badge status-${esc(s.status)}">${esc(t('ws.' + s.status))}</span>
+          ${Number(s.cost) > 0 ? `<span class="spk-role">${esc(fmtMoney(Number(s.cost)))} ${esc(t('unit.toman'))}</span>` : ''}</div>
+        <div class="detail">
+          ${when ? `<span>${icon('clock', 13)} ${esc(when)}</span>` : ''}
+          ${Number(s.duration) > 0 ? `<span>${esc(t('f.duration'))}: ${esc(s.duration)} ${esc(t('min.short'))}</span>` : ''}
+          ${venue ? `<span>${icon('pin', 13)} ${esc(venue)}</span>` : ''}
+          ${s.host ? `<span>${icon('mic', 13)} ${esc(s.host)}</span>` : ''}
+        </div>
+        ${segs.length ? `<div class="notes-line">${icon('list', 12)} ${esc(t('shows.segCount', { n: segs.length }))}</div>` : ''}
+        ${eq.length ? `<div class="notes-line">${icon('check', 12)} ${esc(t('shows.eqCount', { n: eq.filter((e) => e.done).length, m: eq.length }))}</div>` : ''}
+        ${s.description ? `<div class="notes-line">${esc(s.description)}</div>` : ''}
+      </div>
+      <div class="member-actions">
+        <button class="btn btn-ghost btn-icon" data-act="edit" title="${esc(t('edit'))}">${icon('pencil', 14)}</button>
+        <button class="btn btn-ghost btn-icon" data-act="del" title="${esc(t('delete'))}" style="color:var(--red)">${icon('trash', 14)}</button>
+      </div>
+    </div>`;
+}
+
+function showSegRow(seg) {
+  const s = seg || { name: '', duration: 0, description: '' };
+  return `<div class="row-item seg-row">
+    <input class="seg-name" value="${esc(s.name)}" placeholder="${esc(t('show.seg.name'))}" />
+    <input class="seg-dur" type="number" min="0" step="1" value="${esc(s.duration)}" placeholder="${esc(t('f.duration'))}" />
+    <input class="seg-desc" value="${esc(s.description)}" placeholder="${esc(t('f.desc'))}" />
+    <button type="button" class="btn btn-ghost btn-icon" data-rm style="color:var(--red)">${icon('x', 14)}</button>
+  </div>`;
+}
+
+function showEqRow(eq) {
+  const e = eq || { label: '', done: 0 };
+  return `<div class="row-item eq-row">
+    <label class="eq-done"><input type="checkbox" class="eq-check" ${e.done ? 'checked' : ''} /></label>
+    <input class="eq-label" value="${esc(e.label)}" placeholder="${esc(t('show.eq.label'))}" />
+    <button type="button" class="btn btn-ghost btn-icon" data-rm style="color:var(--red)">${icon('x', 14)}</button>
+  </div>`;
+}
+
+function showFormModal(item) {
+  const s = item || { name: '', type: 'live', description: '', date: '', time_start: '', time_end: '', duration: 0, location_id: '', venue: '', host: '', status: 'planned', cost: 0, equipment: [], segments: [], notes: '' };
+  const locations = (currentEvent.design && currentEvent.design.locations) || [];
+  openModal(`
+    <h3>${esc(t(item ? 'show.edit' : 'show.add'))}</h3>
+    <div class="form-grid">
+      <div class="field"><label>${esc(t('show.name'))} *</label><input id="sh-name" value="${esc(s.name)}" placeholder="${esc(t('show.namePh'))}" /></div>
+      <div class="field"><label>${esc(t('f.type'))}</label><select id="sh-type">${SHOW_TYPES.map((k) => `<option value="${k}" ${s.type === k ? 'selected' : ''}>${esc(t('show.t.' + k))}</option>`).join('')}</select></div>
+      <div class="field"><label>${esc(t('show.status'))}</label><select id="sh-status">${SHOW_STATUS.map((k) => `<option value="${k}" ${s.status === k ? 'selected' : ''}>${esc(t('ws.' + k))}</option>`).join('')}</select></div>
+      <div class="field"><label>${esc(t('f.date'))}</label><input id="sh-date" type="date" value="${esc(s.date)}" /></div>
+      <div class="field"><label>${esc(t('ws.timeStart'))}</label><input id="sh-start" type="time" value="${esc(s.time_start)}" /></div>
+      <div class="field"><label>${esc(t('ws.timeEnd'))}</label><input id="sh-end" type="time" value="${esc(s.time_end)}" /></div>
+      <div class="field"><label>${esc(t('f.duration'))}</label><input id="sh-duration" type="number" min="0" step="1" value="${esc(s.duration)}" /></div>
+      <div class="field"><label>${esc(t('show.cost'))}</label><input id="sh-cost" type="number" min="0" step="0.01" value="${esc(s.cost)}" /></div>
+      <div class="field"><label>${esc(t('show.loc'))}</label><select id="sh-loc"><option value="">— ${esc(t('show.noLoc'))} —</option>${locations.map((l) => `<option value="${l.id}" ${String(s.location_id) === String(l.id) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>${esc(t('show.venue'))}</label><input id="sh-venue" value="${esc(s.venue)}" placeholder="${esc(t('ph.location'))}" /></div>
+      <div class="field full"><label>${esc(t('show.host'))}</label><input id="sh-host" value="${esc(s.host)}" placeholder="${esc(t('ph.name'))}" /></div>
+      <div class="field full"><label>${esc(t('f.desc'))}</label><textarea id="sh-desc" rows="2">${esc(s.description)}</textarea></div>
+    </div>
+    <div class="subhead"><span>${esc(t('show.segments'))}</span><button type="button" class="btn btn-sm" id="sh-add-seg">${icon('plus', 13)} ${esc(t('show.seg.add'))}</button></div>
+    <div id="sh-segs">${(s.segments || []).map(showSegRow).join('')}</div>
+    <div class="subhead"><span>${esc(t('show.equipment'))}</span><button type="button" class="btn btn-sm" id="sh-add-eq">${icon('plus', 13)} ${esc(t('show.eq.add'))}</button></div>
+    <div id="sh-eqs">${(s.equipment || []).map(showEqRow).join('')}</div>
+    <div class="modal-actions">
+      <button class="btn" data-close>${esc(t('cancel'))}</button>
+      <button class="btn btn-primary" id="sh-save">${esc(t(item ? 'save.changes' : 'show.add'))}</button>
+    </div>`,
+    {
+      onOpen(overlay) {
+        const segs = overlay.querySelector('#sh-segs');
+        const eqs = overlay.querySelector('#sh-eqs');
+        const bindRemove = (box) => box.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', () => b.closest('.row-item').remove()));
+        bindRemove(segs);
+        bindRemove(eqs);
+        overlay.querySelector('#sh-add-seg').addEventListener('click', () => { segs.insertAdjacentHTML('beforeend', showSegRow()); bindRemove(segs); });
+        overlay.querySelector('#sh-add-eq').addEventListener('click', () => { eqs.insertAdjacentHTML('beforeend', showEqRow()); bindRemove(eqs); });
+        overlay.querySelector('#sh-save').addEventListener('click', async () => {
+          const name = document.getElementById('sh-name').value.trim();
+          if (!name) return toast(t('show.req'));
+          const body = {
+            name,
+            type: document.getElementById('sh-type').value,
+            status: document.getElementById('sh-status').value,
+            date: document.getElementById('sh-date').value,
+            time_start: document.getElementById('sh-start').value,
+            time_end: document.getElementById('sh-end').value,
+            duration: document.getElementById('sh-duration').value,
+            cost: document.getElementById('sh-cost').value,
+            location_id: document.getElementById('sh-loc').value || null,
+            venue: document.getElementById('sh-venue').value.trim(),
+            host: document.getElementById('sh-host').value.trim(),
+            description: document.getElementById('sh-desc').value.trim(),
+            segments: [...segs.querySelectorAll('.seg-row')].map((r) => ({
+              name: r.querySelector('.seg-name').value.trim(),
+              duration: r.querySelector('.seg-dur').value,
+              description: r.querySelector('.seg-desc').value.trim(),
+            })).filter((x) => x.name),
+            equipment: [...eqs.querySelectorAll('.eq-row')].map((r) => ({
+              label: r.querySelector('.eq-label').value.trim(),
+              done: r.querySelector('.eq-check').checked ? 1 : 0,
+            })).filter((x) => x.label),
+          };
+          if (item) await api.updateShow(currentEvent.id, item.id, body);
+          else await api.addShow(currentEvent.id, body);
+          currentEvent = await api.event(currentEvent.id);
+          toast(item ? t('show.updated') : t('show.added'));
+          closeModal();
+          renderShows();
+        });
+      },
+    }
+  );
+}
+
+/* ---------- meetings ---------- */
+const MEET_STATUS = ['planned', 'confirmed', 'cancelled', 'held'];
+const ATT_SOURCES = [
+  ['member', 'src.team'],
+  ['speaker', 'src.speakers'],
+  ['guest', 'src.guests'],
+  ['participant', 'src.participants'],
+];
+
+function sourceName(refType, refId, fallback) {
+  const ev = currentEvent;
+  let name = '';
+  if (refType === 'member') name = (ev.members || []).find((x) => x.id === Number(refId))?.name || '';
+  else if (refType === 'speaker') name = (ev.speakers || []).find((x) => x.id === Number(refId))?.name || '';
+  else if (refType === 'guest') name = (ev.guests || []).find((x) => x.id === Number(refId))?.name || '';
+  else if (refType === 'participant') name = (ev.participants || []).find((x) => x.id === Number(refId))?.name || '';
+  return name || fallback || '';
+}
+
+function meetingAttendeeRows(m) {
+  const selected = new Map((m.attendees || []).map((a) => [`${a.ref_type}:${a.ref_id}`, a]));
+  return ATT_SOURCES.map(([refType, labelKey]) => {
+    const list = refType === 'member' ? (currentEvent.members || [])
+      : refType === 'speaker' ? (currentEvent.speakers || [])
+      : refType === 'guest' ? (currentEvent.guests || [])
+      : (currentEvent.participants || []);
+    if (!list.length) return '';
+    return `<div class="att-group">
+      <div class="att-group-title">${esc(t(labelKey))}</div>
+      ${list.map((p) => {
+        const key = `${refType}:${p.id}`;
+        const a = selected.get(key);
+        return `<div class="row-item att-row" data-source="${esc(refType)}" data-ref="${p.id}" data-label="${esc(p.name)}">
+          <label class="att-pick"><input type="checkbox" class="att-check" ${a ? 'checked' : ''} /></label>
+          <span class="att-name">${esc(p.name)}</span>
+          <select class="att-status">${G_STATUS.map((k) => `<option value="${k}" ${(a ? a.status : 'invited') === k ? 'selected' : ''}>${esc(t('g.' + k))}</option>`).join('')}</select>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+}
+
+function meetingAgendaRow(it) {
+  const a = it || { text: '', done: 0 };
+  return `<div class="row-item agenda-row">
+    <label class="eq-done"><input type="checkbox" class="agenda-check" ${a.done ? 'checked' : ''} /></label>
+    <input class="agenda-text" value="${esc(a.text)}" placeholder="${esc(t('meet.agendaPh'))}" />
+    <button type="button" class="btn btn-ghost btn-icon" data-rm style="color:var(--red)">${icon('x', 14)}</button>
+  </div>`;
+}
+
+function renderMeetings() {
+  const ev = currentEvent;
+  const list = ev.meetings || [];
+  const held = list.filter((m) => m.status === 'held').length;
+  const upcoming = list.filter((m) => m.status !== 'held' && m.status !== 'cancelled');
+  const going = upcoming.reduce((a, m) => a + (m.attendees || []).filter((x) => x.status === 'confirmed' || x.status === 'attended').length, 0);
+  document.getElementById('tab-body').innerHTML = `
+    <div class="section-head">
+      <h3>${esc(t('meet.count', { n: list.length }))}</h3>
+      <div style="display:flex;gap:10px;align-items:center;">
+        ${list.length ? `<span class="sec-count">${esc(t('meet.summary', { h: held, g: going }))}</span>` : ''}
+        <button class="btn btn-sm btn-primary" id="add-meet">${icon('plus', 14)} ${esc(t('add.meeting'))}</button>
+      </div>
+    </div>
+    <div class="member-grid">
+      ${list.length ? list.map(meetingCard).join('') : emptyBlock('🗓️', t('no.meetings'), t('no.meetings.sub'))}
+    </div>`;
+
+  if (canWriteTab('meetings', currentEvent.id)) document.getElementById('add-meet').addEventListener('click', () => meetingFormModal());
+  else { const b = document.getElementById('add-meet'); if (b) b.style.display = 'none'; }
+  bindRowActions('.member-card', 'member-actions');
+  bindMeetingAgendaToggles();
+}
+
+function meetingCard(m) {
+  const when = [m.date ? fmtDate(m.date) : '', [m.time_start, m.time_end].filter(Boolean).join('–')].filter(Boolean).join(' · ');
+  const att = m.attendees || [];
+  const confirmed = att.filter((a) => a.status === 'confirmed' || a.status === 'attended').length;
+  const agenda = m.agenda || [];
+  const agendaDone = agenda.filter((a) => a.done).length;
+  const canW = canWriteTab('meetings', currentEvent.id);
+  return `
+    <div class="card member-card" data-type="meetings" data-id="${m.id}">
+      <span class="avatar">${icon('calendarCheck', 15)}</span>
+      <div class="member-info">
+        <div class="name">${esc(m.title)} <span class="status-badge status-${esc(m.status)}">${esc(t('mt.' + m.status))}</span></div>
+        <div class="detail">
+          ${when ? `<span>${icon('clock', 13)} ${esc(when)}</span>` : ''}
+          ${m.location ? `<span>${icon('pin', 13)} ${esc(m.location)}</span>` : ''}
+        </div>
+        ${att.length ? `<div class="notes-line">${icon('users', 12)} ${esc(t('meet.attCount', { c: confirmed, n: att.length }))}</div>` : ''}
+        ${agenda.length ? `<div class="meet-agenda">${agenda.map((a, i) => `<label class="agenda-item ${a.done ? 'done' : ''}"><input type="checkbox" class="agenda-toggle" data-idx="${i}" ${a.done ? 'checked' : ''} ${canW ? '' : 'disabled'} /> <span>${esc(a.text)}</span></label>`).join('')}</div>` : ''}
+        ${agenda.length ? `<div class="notes-line">${esc(t('meet.agendaDone', { d: agendaDone, n: agenda.length }))}</div>` : ''}
+        ${m.outcome ? `<div class="notes-line outcome">${icon('check', 12)} ${esc(m.outcome)}</div>` : ''}
+      </div>
+      <div class="member-actions">
+        <button class="btn btn-ghost btn-icon" data-act="edit" title="${esc(t('edit'))}">${icon('pencil', 14)}</button>
+        <button class="btn btn-ghost btn-icon" data-act="del" title="${esc(t('delete'))}" style="color:var(--red)">${icon('trash', 14)}</button>
+      </div>
+    </div>`;
+}
+
+function bindMeetingAgendaToggles() {
+  document.querySelectorAll('.member-card[data-type="meetings"] .agenda-toggle').forEach((cb) => {
+    if (cb.disabled) return;
+    cb.addEventListener('change', async () => {
+      const card = cb.closest('.member-card');
+      const id = Number(card.dataset.id);
+      const idx = Number(cb.dataset.idx);
+      const meeting = (currentEvent.meetings || []).find((m) => m.id === id);
+      if (!meeting || !meeting.agenda || !meeting.agenda[idx]) return;
+      cb.disabled = true;
+      const agenda = meeting.agenda.map((a, i) => ({ text: a.text, done: i === idx ? (cb.checked ? 1 : 0) : (a.done ? 1 : 0) }));
+      try {
+        await api.updateMeeting(currentEvent.id, id, { agenda });
+        currentEvent = await api.event(currentEvent.id);
+        renderMeetings();
+      } catch (e) {
+        cb.disabled = false;
+        cb.checked = !cb.checked;
+        toast(t('err.save'));
+      }
+    });
+  });
+}
+
+function meetingFormModal(item) {
+  const m = item || { title: '', description: '', date: '', time_start: '', time_end: '', location: '', status: 'planned', agenda: [], outcome: '', notes: '', attendees: [] };
+  openModal(`
+    <h3>${esc(t(item ? 'meet.edit' : 'meet.add'))}</h3>
+    <div class="form-grid">
+      <div class="field"><label>${esc(t('meet.title'))} *</label><input id="m-title" value="${esc(m.title)}" placeholder="${esc(t('meet.titlePh'))}" /></div>
+      <div class="field"><label>${esc(t('meet.status'))}</label><select id="m-status">${MEET_STATUS.map((k) => `<option value="${k}" ${m.status === k ? 'selected' : ''}>${esc(t('mt.' + k))}</option>`).join('')}</select></div>
+      <div class="field"><label>${esc(t('f.date'))}</label><input id="m-date" type="date" value="${esc(m.date)}" /></div>
+      <div class="field"><label>${esc(t('ws.timeStart'))}</label><input id="m-start" type="time" value="${esc(m.time_start)}" /></div>
+      <div class="field"><label>${esc(t('ws.timeEnd'))}</label><input id="m-end" type="time" value="${esc(m.time_end)}" /></div>
+      <div class="field"><label>${esc(t('show.venue'))}</label><input id="m-loc" value="${esc(m.location)}" placeholder="${esc(t('ph.location'))}" /></div>
+      <div class="field full"><label>${esc(t('f.desc'))}</label><textarea id="m-desc" rows="2">${esc(m.description)}</textarea></div>
+    </div>
+    <div class="subhead"><span>${esc(t('meet.attendees'))}</span></div>
+    <div id="m-atts" class="att-list">${meetingAttendeeRows(m)}</div>
+    <div class="subhead"><span>${esc(t('meet.agenda'))}</span><button type="button" class="btn btn-sm" id="m-add-agenda">${icon('plus', 13)} ${esc(t('meet.agenda.add'))}</button></div>
+    <div id="m-agendas">${(m.agenda || []).map(meetingAgendaRow).join('')}</div>
+    <div class="field full"><label>${esc(t('meet.outcome'))}</label><textarea id="m-outcome" rows="2" placeholder="${esc(t('meet.outcomePh'))}">${esc(m.outcome)}</textarea></div>
+    <div class="field full"><label>${esc(t('f.notes'))}</label><textarea id="m-notes" rows="2">${esc(m.notes)}</textarea></div>
+    <div class="modal-actions">
+      <button class="btn" data-close>${esc(t('cancel'))}</button>
+      <button class="btn btn-primary" id="m-save">${esc(t(item ? 'save.changes' : 'meet.add'))}</button>
+    </div>`,
+    {
+      onOpen(overlay) {
+        const agendas = overlay.querySelector('#m-agendas');
+        const bindRemove = (box) => box.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', () => b.closest('.row-item').remove()));
+        bindRemove(agendas);
+        overlay.querySelector('#m-add-agenda').addEventListener('click', () => { agendas.insertAdjacentHTML('beforeend', meetingAgendaRow()); bindRemove(agendas); });
+        overlay.querySelector('#m-save').addEventListener('click', async () => {
+          const title = document.getElementById('m-title').value.trim();
+          if (!title) return toast(t('meet.req'));
+          const body = {
+            title,
+            status: document.getElementById('m-status').value,
+            date: document.getElementById('m-date').value,
+            time_start: document.getElementById('m-start').value,
+            time_end: document.getElementById('m-end').value,
+            location: document.getElementById('m-loc').value.trim(),
+            description: document.getElementById('m-desc').value.trim(),
+            outcome: document.getElementById('m-outcome').value.trim(),
+            notes: document.getElementById('m-notes').value.trim(),
+            agenda: [...agendas.querySelectorAll('.agenda-row')].map((r) => ({
+              text: r.querySelector('.agenda-text').value.trim(),
+              done: r.querySelector('.agenda-check').checked ? 1 : 0,
+            })).filter((x) => x.text),
+            attendees: [...overlay.querySelectorAll('.att-row')].filter((r) => r.querySelector('.att-check').checked).map((r) => ({
+              ref_type: r.dataset.source,
+              ref_id: Number(r.dataset.ref),
+              label: r.dataset.label,
+              status: r.querySelector('.att-status').value,
+            })),
+          };
+          if (item) await api.updateMeeting(currentEvent.id, item.id, body);
+          else await api.addMeeting(currentEvent.id, body);
+          currentEvent = await api.event(currentEvent.id);
+          toast(item ? t('meet.updated') : t('meet.added'));
+          closeModal();
+          renderMeetings();
+        });
+      },
+    }
+  );
+}
+
 /* ---------- event form ---------- */
 const EV_STATUS = ['upcoming', 'ongoing', 'completed', 'draft'];
 
@@ -2374,9 +2720,10 @@ function modulesModal() {
     <div class="module-grid">
       ${MODULES.map((m) => {
         const on = allOn || current.includes(m);
+        const ic = (TABS.find(([k]) => k === m) || [null, null, 'spark'])[2];
         return `<label class="module-item ${on ? 'on' : ''}">
           <input type="checkbox" data-module="${esc(m)}" ${on ? 'checked' : ''} />
-          <span class="module-name">${icon('spark', 13)} ${esc(t('tab.' + m))}</span>
+          <span class="module-name">${icon(ic, 13)} ${esc(t('tab.' + m))}</span>
           <span class="switch"></span>
         </label>`;
       }).join('')}
@@ -2387,6 +2734,9 @@ function modulesModal() {
     </div>`,
     {
       onOpen(overlay) {
+        overlay.querySelectorAll('input[data-module]').forEach((cb) => {
+          cb.addEventListener('change', () => cb.closest('.module-item').classList.toggle('on', cb.checked));
+        });
         overlay.querySelector('#mod-save').addEventListener('click', async () => {
           const picked = [...overlay.querySelectorAll('input[data-module]:checked')].map((x) => x.dataset.module);
           await api.updateEvent(currentEvent.id, { features: picked });
