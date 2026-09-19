@@ -72,6 +72,14 @@ const api = {
   updateAdventure: (id, aid, body) => request('PUT', `/api/events/${id}/adventures/${aid}`, body),
   deleteAdventure: (id, aid) => request('DELETE', `/api/events/${id}/adventures/${aid}`),
 
+  addShow: (id, body) => request('POST', `/api/events/${id}/shows`, body),
+  updateShow: (id, sid, body) => request('PUT', `/api/events/${id}/shows/${sid}`, body),
+  deleteShow: (id, sid) => request('DELETE', `/api/events/${id}/shows/${sid}`),
+
+  addMeeting: (id, body) => request('POST', `/api/events/${id}/meetings`, body),
+  updateMeeting: (id, mid, body) => request('PUT', `/api/events/${id}/meetings/${mid}`, body),
+  deleteMeeting: (id, mid) => request('DELETE', `/api/events/${id}/meetings/${mid}`),
+
   myTasks: () => request('GET', '/api/my-tasks'),
   assigneeUsers: () => request('GET', '/api/assignee-users'),
 };

@@ -246,6 +246,8 @@ const TAB_MAP = {
   speakers: 'speakers',
   workshops: 'workshops',
   adventures: 'adventures',
+  shows: 'shows',
+  meetings: 'meetings',
 };
 
 // Returns { ok, params } — params: { eventId?, memberId?, taskId?, sponsorId?, itemId? }
@@ -255,7 +257,7 @@ function parsePath(pathname) {
   if (parts[0] !== 'api') return null;
   if (parts.length < 2 || parts[1] !== 'events') return null;
 
-  const map = { members: 'memberId', tasks: 'taskId', sponsors: 'sponsorId', timeline: 'itemId', files: 'fileId', finances: 'financeId', budget: 'budgetId', participants: 'participantId', guests: 'guestId', speakers: 'speakerId', workshops: 'workshopId', adventures: 'adventureId' };
+  const map = { members: 'memberId', tasks: 'taskId', sponsors: 'sponsorId', timeline: 'itemId', files: 'fileId', finances: 'financeId', budget: 'budgetId', participants: 'participantId', guests: 'guestId', speakers: 'speakerId', workshops: 'workshopId', adventures: 'adventureId', shows: 'showId', meetings: 'meetingId' };
   if (parts.length === 2) {
     params.eventId = null;
     params.tail = [];
@@ -433,7 +435,7 @@ async function handleApi(req, res, pathname) {
 
   const parsed = parsePath(pathname);
   if (!parsed || !parsed.ok) return notFound(res);
-  const { eventId, memberId, taskId, sponsorId, itemId, fileId, financeId, budgetId, participantId, guestId, speakerId, workshopId, adventureId } = parsed.params;
+  const { eventId, memberId, taskId, sponsorId, itemId, fileId, financeId, budgetId, participantId, guestId, speakerId, workshopId, adventureId, showId, meetingId } = parsed.params;
 
   if (pathname === '/api/events' || pathname === '/api/events/') {
     if (method === 'GET') {
@@ -767,6 +769,46 @@ async function handleApi(req, res, pathname) {
       if (method === 'DELETE') {
         if (!canWrite(user, eventId, 'adventures')) return sendError(res, 403, 'No permission');
         return dbm.deleteAdventure(eventId, adventureId) ? sendJson(res, 200, { ok: true }) : notFound(res);
+      }
+    }
+    return sendError(res, 405, 'Method not allowed');
+  }
+
+  // /api/events/:id/shows
+  if (parsed.params.tail && parsed.params.tail[0] === 'shows') {
+    if (method === 'POST' && !showId) {
+      if (!canWrite(user, eventId, 'shows')) return sendError(res, 403, 'No permission');
+      return sendJson(res, 201, dbm.createShow(eventId, await readBody(req)));
+    }
+    if (showId) {
+      if (method === 'PUT') {
+        if (!canWrite(user, eventId, 'shows')) return sendError(res, 403, 'No permission');
+        const s = dbm.updateShow(eventId, showId, await readBody(req));
+        return s ? sendJson(res, 200, s) : notFound(res);
+      }
+      if (method === 'DELETE') {
+        if (!canWrite(user, eventId, 'shows')) return sendError(res, 403, 'No permission');
+        return dbm.deleteShow(eventId, showId) ? sendJson(res, 200, { ok: true }) : notFound(res);
+      }
+    }
+    return sendError(res, 405, 'Method not allowed');
+  }
+
+  // /api/events/:id/meetings
+  if (parsed.params.tail && parsed.params.tail[0] === 'meetings') {
+    if (method === 'POST' && !meetingId) {
+      if (!canWrite(user, eventId, 'meetings')) return sendError(res, 403, 'No permission');
+      return sendJson(res, 201, dbm.createMeeting(eventId, await readBody(req)));
+    }
+    if (meetingId) {
+      if (method === 'PUT') {
+        if (!canWrite(user, eventId, 'meetings')) return sendError(res, 403, 'No permission');
+        const m = dbm.updateMeeting(eventId, meetingId, await readBody(req));
+        return m ? sendJson(res, 200, m) : notFound(res);
+      }
+      if (method === 'DELETE') {
+        if (!canWrite(user, eventId, 'meetings')) return sendError(res, 403, 'No permission');
+        return dbm.deleteMeeting(eventId, meetingId) ? sendJson(res, 200, { ok: true }) : notFound(res);
       }
     }
     return sendError(res, 405, 'Method not allowed');

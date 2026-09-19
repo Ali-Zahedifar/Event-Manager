@@ -215,6 +215,61 @@ db.exec(`
     created_at  TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS shows (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    type        TEXT NOT NULL DEFAULT 'live',
+    description TEXT DEFAULT '',
+    date        TEXT DEFAULT '',
+    time_start  TEXT DEFAULT '',
+    time_end    TEXT DEFAULT '',
+    duration    INTEGER NOT NULL DEFAULT 0,
+    location_id INTEGER REFERENCES design_locations(id) ON DELETE SET NULL,
+    venue       TEXT DEFAULT '',
+    host        TEXT DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'planned',
+    cost        REAL NOT NULL DEFAULT 0,
+    equipment   TEXT DEFAULT '[]',
+    notes       TEXT DEFAULT '',
+    created_at  TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS show_segments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    show_id     INTEGER NOT NULL REFERENCES shows(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL DEFAULT 0,
+    name        TEXT NOT NULL,
+    duration    INTEGER NOT NULL DEFAULT 0,
+    description TEXT DEFAULT ''
+  );
+
+  CREATE TABLE IF NOT EXISTS meetings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    date        TEXT DEFAULT '',
+    time_start  TEXT DEFAULT '',
+    time_end    TEXT DEFAULT '',
+    location    TEXT DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'planned',
+    agenda      TEXT DEFAULT '[]',
+    outcome     TEXT DEFAULT '',
+    notes       TEXT DEFAULT '',
+    created_at  TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS meeting_attendees (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    event_id   INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    ref_type   TEXT NOT NULL,
+    ref_id     INTEGER NOT NULL DEFAULT 0,
+    label      TEXT DEFAULT '',
+    status     TEXT NOT NULL DEFAULT 'invited'
+  );
+
   CREATE INDEX IF NOT EXISTS idx_members_event   ON members(event_id);
   CREATE INDEX IF NOT EXISTS idx_tasks_event     ON tasks(event_id);
   CREATE INDEX IF NOT EXISTS idx_sponsors_event  ON sponsors(event_id);
@@ -226,6 +281,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_speakers_event  ON speakers(event_id);
   CREATE INDEX IF NOT EXISTS idx_workshops_event ON workshops(event_id);
   CREATE INDEX IF NOT EXISTS idx_adventures_event ON adventures(event_id);
+  CREATE INDEX IF NOT EXISTS idx_shows_event         ON shows(event_id);
+  CREATE INDEX IF NOT EXISTS idx_show_segments_show  ON show_segments(show_id);
+  CREATE INDEX IF NOT EXISTS idx_meetings_event      ON meetings(event_id);
+  CREATE INDEX IF NOT EXISTS idx_meeting_attendees_event ON meeting_attendees(event_id);
 
   CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -283,6 +342,28 @@ if (db.prepare('SELECT value FROM meta WHERE key = ?').get(MONEY_SCALE_FLAG) ===
     db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(MONEY_SCALE_FLAG, '1000000');
     db.exec('COMMIT');
     console.log('[MIGRATE] Currency converted: million tooman -> tooman (x1,000,000)');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+}
+
+// One-time sponsor unit migration: monetary sponsor contributions were previously
+// entered in units of "million tooman". Numeric-looking money values are converted
+// to plain tooman (x1,000,000). In-kind/services amounts (free text) are untouched.
+const SPONSOR_MONEY_FLAG = 'sponsor_money_v1';
+if (db.prepare('SELECT value FROM meta WHERE key = ?').get(SPONSOR_MONEY_FLAG) === undefined) {
+  db.exec('BEGIN');
+  try {
+    db.exec(`UPDATE sponsors
+             SET contribution_amount = CAST(CAST(CAST(contribution_amount AS REAL) * 1000000 AS INTEGER) AS TEXT)
+             WHERE contribution_type = 'money'
+               AND contribution_amount <> ''
+               AND contribution_amount NOT GLOB '*[^0-9.]*'
+               AND contribution_amount <> '.' AND contribution_amount <> ''`);
+    db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(SPONSOR_MONEY_FLAG, '1');
+    db.exec('COMMIT');
+    console.log('[MIGRATE] Sponsor money converted: million tooman -> tooman (x1,000,000)');
   } catch (e) {
     db.exec('ROLLBACK');
     throw e;
@@ -490,6 +571,15 @@ function row(r) {
   return { ...r };
 }
 
+function parseJsonList(raw) {
+  try { const v = JSON.parse(raw || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+function normJsonList(list, mapFn) {
+  if (!Array.isArray(list)) return [];
+  return list.map((it) => mapFn(it)).filter((x) => x !== null);
+}
+
 function getEvent(id) {
   const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(id);
   if (!ev) return null;
@@ -506,6 +596,16 @@ function getEvent(id) {
   const speakers = db.prepare('SELECT * FROM speakers WHERE event_id = ? ORDER BY id').all(id);
   const workshops = db.prepare('SELECT * FROM workshops WHERE event_id = ? ORDER BY id').all(id);
   const adventures = db.prepare('SELECT * FROM adventures WHERE event_id = ? ORDER BY id').all(id);
+  const shows = db.prepare('SELECT * FROM shows WHERE event_id = ? ORDER BY id').all(id);
+  for (const sh of shows) {
+    sh.segments = db.prepare('SELECT * FROM show_segments WHERE show_id = ? ORDER BY position, id').all(sh.id);
+    sh.equipment = parseJsonList(sh.equipment);
+  }
+  const meetings = db.prepare('SELECT * FROM meetings WHERE event_id = ? ORDER BY id').all(id);
+  for (const mt of meetings) {
+    mt.agenda = parseJsonList(mt.agenda);
+    mt.attendees = db.prepare('SELECT * FROM meeting_attendees WHERE meeting_id = ? ORDER BY id').all(mt.meeting_id);
+  }
 
   const tasks = db.prepare('SELECT * FROM tasks WHERE event_id = ? ORDER BY id').all(id);
   const taskMemberStmt = db.prepare(
@@ -525,7 +625,7 @@ function getEvent(id) {
     t.assignees = taskAssigneeStmt.all(t.id);
   }
 
-  return { ...ev, features: parseFeatures(ev.features), members, tasks, sponsors, timeline, files: files.map(scrubFile), finances: finances.map(scrubFinance), budget: budgetItems, design: { locations: designLocations, plans: designPlans }, participants, guests, speakers, workshops, adventures };
+  return { ...ev, features: parseFeatures(ev.features), members, tasks, sponsors, timeline, files: files.map(scrubFile), finances: finances.map(scrubFinance), budget: budgetItems, design: { locations: designLocations, plans: designPlans }, participants, guests, speakers, workshops, adventures, shows, meetings };
 }
 
 function parseFeatures(raw) {
@@ -1284,6 +1384,163 @@ function deleteAdventure(eventId, adventureId) {
   return true;
 }
 
+// ---------- shows ----------
+function normShowEquipment(list) {
+  return normJsonList(list, (it) => ({ label: String((it && it.label) || '').slice(0, 500), done: it && it.done ? 1 : 0 }));
+}
+
+function syncShowSegments(showId, segments) {
+  db.prepare('DELETE FROM show_segments WHERE show_id = ?').run(showId);
+  if (!Array.isArray(segments)) return;
+  const ins = db.prepare('INSERT INTO show_segments (show_id, position, name, duration, description) VALUES (?, ?, ?, ?, ?)');
+  segments.forEach((sg, i) => {
+    ins.run(showId, i, String((sg && sg.name) || 'Segment').slice(0, 300), Math.max(0, Number(sg && sg.duration) || 0), String((sg && sg.description) || '').slice(0, 2000));
+  });
+}
+
+function getShowFull(showId) {
+  const sh = db.prepare('SELECT * FROM shows WHERE id = ?').get(showId);
+  if (!sh) return null;
+  sh.segments = db.prepare('SELECT * FROM show_segments WHERE show_id = ? ORDER BY position, id').all(showId);
+  sh.equipment = parseJsonList(sh.equipment);
+  return sh;
+}
+
+function createShow(eventId, data) {
+  const r = db.prepare(
+    `INSERT INTO shows (event_id, name, type, description, date, time_start, time_end, duration, location_id, venue, host, status, cost, equipment, notes, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    eventId,
+    String(data.name ?? '').trim() || 'Untitled show',
+    String(data.type ?? 'live'),
+    String(data.description ?? ''),
+    String(data.date ?? ''),
+    String(data.time_start ?? ''),
+    String(data.time_end ?? ''),
+    Math.max(0, Number(data.duration) || 0),
+    Number(data.location_id) || null,
+    String(data.venue ?? ''),
+    String(data.host ?? ''),
+    String(data.status ?? 'planned'),
+    Math.max(0, Number(data.cost) || 0),
+    JSON.stringify(normShowEquipment(data.equipment)),
+    String(data.notes ?? ''),
+    now()
+  );
+  const showId = Number(r.lastInsertRowid);
+  syncShowSegments(showId, data.segments);
+  return getShowFull(showId);
+}
+
+function updateShow(eventId, showId, data) {
+  const sh = db.prepare('SELECT * FROM shows WHERE id = ? AND event_id = ?').get(showId, eventId);
+  if (!sh) return null;
+  db.prepare(
+    `UPDATE shows SET name = ?, type = ?, description = ?, date = ?, time_start = ?, time_end = ?, duration = ?, location_id = ?, venue = ?, host = ?, status = ?, cost = ?, equipment = ?, notes = ? WHERE id = ?`
+  ).run(
+    String(data.name ?? sh.name),
+    String(data.type ?? sh.type),
+    String(data.description ?? sh.description),
+    String(data.date ?? sh.date),
+    String(data.time_start ?? sh.time_start),
+    String(data.time_end ?? sh.time_end),
+    Math.max(0, Number(data.duration ?? sh.duration) || 0),
+    data.location_id === undefined ? sh.location_id : (Number(data.location_id) || null),
+    String(data.venue ?? sh.venue),
+    String(data.host ?? sh.host),
+    String(data.status ?? sh.status),
+    Math.max(0, Number(data.cost ?? sh.cost) || 0),
+    data.equipment === undefined ? sh.equipment : JSON.stringify(normShowEquipment(data.equipment)),
+    String(data.notes ?? sh.notes),
+    showId
+  );
+  if (data.segments !== undefined) syncShowSegments(showId, data.segments);
+  return getShowFull(showId);
+}
+
+function deleteShow(eventId, showId) {
+  const sh = db.prepare('SELECT * FROM shows WHERE id = ? AND event_id = ?').get(showId, eventId);
+  if (!sh) return false;
+  db.prepare('DELETE FROM shows WHERE id = ?').run(showId);
+  return true;
+}
+
+// ---------- meetings ----------
+function normAgenda(list) {
+  return normJsonList(list, (it) => ({ text: String((it && it.text) || '').slice(0, 500), done: it && it.done ? 1 : 0 }));
+}
+
+function syncMeetingAttendees(meetingId, eventId, attendees) {
+  db.prepare('DELETE FROM meeting_attendees WHERE meeting_id = ?').run(meetingId);
+  if (!Array.isArray(attendees)) return;
+  const ins = db.prepare('INSERT INTO meeting_attendees (meeting_id, event_id, ref_type, ref_id, label, status) VALUES (?, ?, ?, ?, ?, ?)');
+  for (const a of attendees) {
+    if (!a) continue;
+    ins.run(meetingId, eventId, String(a.ref_type || 'participant'), Math.max(0, Number(a.ref_id) || 0), String(a.label ?? '').slice(0, 300), String(a.status ?? 'invited'));
+  }
+}
+
+function getMeetingFull(meetingId) {
+  const m = db.prepare('SELECT * FROM meetings WHERE id = ?').get(meetingId);
+  if (!m) return null;
+  m.agenda = parseJsonList(m.agenda);
+  m.attendees = db.prepare('SELECT * FROM meeting_attendees WHERE meeting_id = ? ORDER BY id').all(meetingId);
+  return m;
+}
+
+function createMeeting(eventId, data) {
+  const r = db.prepare(
+    `INSERT INTO meetings (event_id, title, description, date, time_start, time_end, location, status, agenda, outcome, notes, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    eventId,
+    String(data.title ?? '').trim() || 'Untitled meeting',
+    String(data.description ?? ''),
+    String(data.date ?? ''),
+    String(data.time_start ?? ''),
+    String(data.time_end ?? ''),
+    String(data.location ?? ''),
+    String(data.status ?? 'planned'),
+    JSON.stringify(normAgenda(data.agenda)),
+    String(data.outcome ?? ''),
+    String(data.notes ?? ''),
+    now()
+  );
+  const meetingId = Number(r.lastInsertRowid);
+  syncMeetingAttendees(meetingId, eventId, data.attendees);
+  return getMeetingFull(meetingId);
+}
+
+function updateMeeting(eventId, meetingId, data) {
+  const m = db.prepare('SELECT * FROM meetings WHERE id = ? AND event_id = ?').get(meetingId, eventId);
+  if (!m) return null;
+  db.prepare(
+    `UPDATE meetings SET title = ?, description = ?, date = ?, time_start = ?, time_end = ?, location = ?, status = ?, agenda = ?, outcome = ?, notes = ? WHERE id = ?`
+  ).run(
+    String(data.title ?? m.title),
+    String(data.description ?? m.description),
+    String(data.date ?? m.date),
+    String(data.time_start ?? m.time_start),
+    String(data.time_end ?? m.time_end),
+    String(data.location ?? m.location),
+    String(data.status ?? m.status),
+    data.agenda === undefined ? m.agenda : JSON.stringify(normAgenda(data.agenda)),
+    String(data.outcome ?? m.outcome),
+    String(data.notes ?? m.notes),
+    meetingId
+  );
+  if (data.attendees !== undefined) syncMeetingAttendees(meetingId, eventId, data.attendees);
+  return getMeetingFull(meetingId);
+}
+
+function deleteMeeting(eventId, meetingId) {
+  const m = db.prepare('SELECT * FROM meetings WHERE id = ? AND event_id = ?').get(meetingId, eventId);
+  if (!m) return false;
+  db.prepare('DELETE FROM meetings WHERE id = ?').run(meetingId);
+  return true;
+}
+
 module.exports = {
   db,
   listEvents,
@@ -1340,6 +1597,12 @@ module.exports = {
   createAdventure,
   updateAdventure,
   deleteAdventure,
+  createShow,
+  updateShow,
+  deleteShow,
+  createMeeting,
+  updateMeeting,
+  deleteMeeting,
   featureEnabled,
   createUser,
   getUser,

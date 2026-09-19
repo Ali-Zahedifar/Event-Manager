@@ -56,6 +56,8 @@ function icon(name, size = 16) {
     briefcase: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16M2 12h20"/>',
     compass: '<circle cx="12" cy="12" r="10"/><path d="m16.24 7.76-2.12 6.36-6.36 2.12 2.12-6.36Z"/><path d="m14.12 9.88-2.36 2.36-2.36-2.36 2.36-2.36Z"/>',
     toggle: '<circle cx="8" cy="12" r="4"/><path d="M8 12h12M13 8l3 4-3 4"/>',
+    video: '<path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+    calendarCheck: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4"/>',
   };
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p[name] || p.flag}</svg>`;
 }
@@ -399,6 +401,8 @@ const TABS = [
   ['speakers', 'tab.speakers', 'mic'],
   ['workshops', 'tab.workshops', 'briefcase'],
   ['adventures', 'tab.adventures', 'compass'],
+  ['shows', 'tab.shows', 'video'],
+  ['meetings', 'tab.meetings', 'calendarCheck'],
   ['participants', 'tab.participants', 'userPlus'],
   ['guests', 'tab.guests', 'star'],
   ['sponsors', 'tab.sponsors', 'gift'],
@@ -408,7 +412,7 @@ const TABS = [
 ];
 
 // Modules that admins can enable/disable per event ('overview' is always on).
-const MODULES = ['team', 'tasks', 'timeline', 'design', 'speakers', 'workshops', 'adventures', 'participants', 'guests', 'sponsors', 'finances', 'budget', 'files'];
+const MODULES = ['team', 'tasks', 'timeline', 'design', 'speakers', 'workshops', 'adventures', 'shows', 'meetings', 'participants', 'guests', 'sponsors', 'finances', 'budget', 'files'];
 
 let currentEvent = null;
 let currentTab = 'overview';
@@ -528,7 +532,7 @@ function renderEvent() {
   document.getElementById('ev-sub').innerHTML = sub.join('');
 
   const body = document.getElementById('tab-body');
-  const renderers = { overview: renderOverview, team: renderTeam, tasks: renderTasks, sponsors: renderSponsors, timeline: renderTimeline, files: renderFiles, finances: renderFinances, budget: renderBudget, design: renderDesign, participants: renderParticipants, guests: renderGuests, speakers: renderSpeakers, workshops: renderWorkshops, adventures: renderAdventures };
+  const renderers = { overview: renderOverview, team: renderTeam, tasks: renderTasks, sponsors: renderSponsors, timeline: renderTimeline, files: renderFiles, finances: renderFinances, budget: renderBudget, design: renderDesign, participants: renderParticipants, guests: renderGuests, speakers: renderSpeakers, workshops: renderWorkshops, adventures: renderAdventures, shows: renderShows, meetings: renderMeetings };
   body.innerHTML = `<div class="loading">${esc(t('loading'))}</div>`;
   renderers[currentTab]();
 }
@@ -2349,6 +2353,8 @@ const ALL_TABS = [
   ['speakers', 'tab.speakers'],
   ['workshops', 'tab.workshops'],
   ['adventures', 'tab.adventures'],
+  ['shows', 'tab.shows'],
+  ['meetings', 'tab.meetings'],
   ['participants', 'tab.participants'],
   ['guests', 'tab.guests'],
   ['sponsors', 'tab.sponsors'],
