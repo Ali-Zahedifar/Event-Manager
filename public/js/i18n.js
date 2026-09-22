@@ -427,6 +427,12 @@ const I18N_DICT = {
     'admin.backup.downloaded': 'Backup downloaded',
     'admin.export.downloaded': 'Export downloaded',
     'backup.file': 'Backup file',
+    'sponsors.summary.confirmed': 'Confirmed: {n}{amount}',
+    'sponsors.summary.contacted': 'Contacted: {n}',
+    'sponsors.summary.declined': 'Declined: {n}',
+    'sponsors.summary.money': 'Cash: {amount}',
+    'sponsors.summary.inkind': 'In-kind: {n}',
+    'sponsors.summary.services': 'Services: {n}',
   },
 
   fa: {
@@ -856,6 +862,12 @@ const I18N_DICT = {
     'admin.backup.downloaded': 'پشتیبان دانلود شد',
     'admin.export.downloaded': 'صادر کردن دانلود شد',
     'backup.file': 'فایل پشتیبان',
+    'sponsors.summary.confirmed': 'تأیید شده: {n}{amount}',
+    'sponsors.summary.contacted': 'در تماس: {n}',
+    'sponsors.summary.declined': 'رد شده: {n}',
+    'sponsors.summary.money': 'نقدی: {amount}',
+    'sponsors.summary.inkind': 'غیرنقدی: {n}',
+    'sponsors.summary.services': 'خدماتی: {n}',
   },
 };
 

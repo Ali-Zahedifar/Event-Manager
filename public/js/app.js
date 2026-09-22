@@ -921,13 +921,56 @@ const SP_STATUS = ['contacted', 'confirmed', 'declined'];
 function renderSponsors() {
   const ev = currentEvent;
   const sponsors = ev.sponsors || [];
+
+  // Sort: confirmed (green) first, contacted (amber) middle, declined (red) last
+  const statusOrder = { confirmed: 0, contacted: 1, declined: 2 };
+  const sorted = [...sponsors].sort((a, b) => (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99));
+
+  // Summary stats
+  const summary = sorted.reduce((acc, s) => {
+    acc.total++;
+    if (s.status === 'confirmed') { acc.confirmed++; acc.confirmedAmount += parseFloat(s.contribution_amount) || 0; }
+    else if (s.status === 'contacted') { acc.contacted++; }
+    else if (s.status === 'declined') { acc.declined++; }
+    if (s.contribution_type === 'money') acc.moneyAmount += parseFloat(s.contribution_amount) || 0;
+    else if (s.contribution_type === 'in-kind') acc.inkindCount++;
+    else if (s.contribution_type === 'services') acc.servicesCount++;
+    return acc;
+  }, { total: 0, confirmed: 0, contacted: 0, declined: 0, confirmedAmount: 0, moneyAmount: 0, inkindCount: 0, servicesCount: 0 });
+
   document.getElementById('tab-body').innerHTML = `
     <div class="section-head">
       <h3>${esc(t('sponsors.count', { n: sponsors.length }))}</h3>
       <button class="btn btn-sm btn-primary" id="add-sponsor">${icon('plus', 14)} ${esc(t('add.sponsor'))}</button>
     </div>
+    <div class="sponsors-summary">
+      <div class="sponsor-summary-card">
+        <span class="sponsor-summary-icon ic-confirmed">${icon('check', 15)}</span>
+        <span class="sponsor-summary-label">${esc(t('sponsors.summary.confirmed', { n: summary.confirmed, amount: summary.confirmedAmount ? fmtMoney(summary.confirmedAmount) : '' }))}</span>
+      </div>
+      <div class="sponsor-summary-card">
+        <span class="sponsor-summary-icon ic-contacted">${icon('clock', 15)}</span>
+        <span class="sponsor-summary-label">${esc(t('sponsors.summary.contacted', { n: summary.contacted }))}</span>
+      </div>
+      <div class="sponsor-summary-card">
+        <span class="sponsor-summary-icon ic-declined">${icon('x', 15)}</span>
+        <span class="sponsor-summary-label">${esc(t('sponsors.summary.declined', { n: summary.declined }))}</span>
+      </div>
+      <div class="sponsor-summary-card">
+        <span class="sponsor-summary-icon ic-money">${icon('banknote', 15)}</span>
+        <span class="sponsor-summary-label">${esc(t('sponsors.summary.money', { amount: summary.moneyAmount ? fmtMoney(summary.moneyAmount) : '0' }))}</span>
+      </div>
+      <div class="sponsor-summary-card">
+        <span class="sponsor-summary-icon ic-inkind">${icon('gift', 15)}</span>
+        <span class="sponsor-summary-label">${esc(t('sponsors.summary.inkind', { n: summary.inkindCount }))}</span>
+      </div>
+      <div class="sponsor-summary-card">
+        <span class="sponsor-summary-icon ic-services">${icon('briefcase', 15)}</span>
+        <span class="sponsor-summary-label">${esc(t('sponsors.summary.services', { n: summary.servicesCount }))}</span>
+      </div>
+    </div>
     <div class="sponsor-grid">
-      ${sponsors.length ? sponsors.map(sponsorCard).join('') : emptyBlock('🤝', t('no.sponsors'), t('no.sponsors.sub'))}
+      ${sorted.length ? sorted.map(sponsorCard).join('') : emptyBlock('🤝', t('no.sponsors'), t('no.sponsors.sub'))}
     </div>`;
 
   if (canWriteTab('sponsors', currentEvent.id)) document.getElementById('add-sponsor').addEventListener('click', () => sponsorFormModal());
