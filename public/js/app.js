@@ -58,6 +58,8 @@ function icon(name, size = 16) {
     toggle: '<circle cx="8" cy="12" r="4"/><path d="M8 12h12M13 8l3 4-3 4"/>',
     video: '<path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
     calendarCheck: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4"/>',
+    database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
+    upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
   };
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p[name] || p.flag}</svg>`;
 }
@@ -239,7 +241,17 @@ function appShell(title) {
         </div>
       </div>
       <div class="topbar-actions">
-        ${isAdmin() ? `<button class="btn btn-sm" id="users-btn">${icon('users', 14)} ${esc(t('users'))}</button>` : ''}
+        ${isAdmin() ? `
+          <div class="dropdown">
+            <button class="btn btn-sm dropdown-toggle" id="admin-btn">${icon('settings', 14)} ${esc(t('admin'))}</button>
+            <div class="dropdown-menu" id="admin-menu">
+              <button class="dropdown-item" data-act="users">${icon('users', 13)} ${esc(t('users'))}</button>
+              <button class="dropdown-item" data-act="export-current">${icon('download', 13)} ${esc(t('admin.export.current'))}</button>
+              <button class="dropdown-item" data-act="export-all">${icon('download', 13)} ${esc(t('admin.export.all'))}</button>
+              <button class="dropdown-item" data-act="backup">${icon('database', 13)} ${esc(t('admin.backup'))}</button>
+              <button class="dropdown-item" data-act="restore">${icon('upload', 13)} ${esc(t('admin.restore'))}</button>
+            </div>
+          </div>` : ''}
         <button class="btn btn-sm" id="pw-btn">${esc(t('change.password'))}</button>
         <button class="btn btn-sm" id="logout-btn">${esc(t('logout'))}</button>
         ${langToggleHTML()}
@@ -314,6 +326,23 @@ async function renderDashboard() {
   if (usersBtn) usersBtn.addEventListener('click', usersModal);
   const pwBtn = document.getElementById('pw-btn');
   if (pwBtn) pwBtn.addEventListener('click', changePasswordModal);
+  const adminBtn = document.getElementById('admin-btn');
+  const adminMenu = document.getElementById('admin-menu');
+  if (adminBtn && adminMenu) {
+    adminBtn.addEventListener('click', (e) => { e.stopPropagation(); adminMenu.classList.toggle('open'); });
+    adminMenu.querySelectorAll('.dropdown-item').forEach(item => {
+      item.addEventListener('click', () => {
+        adminMenu.classList.remove('open');
+        const act = item.dataset.act;
+        if (act === 'users') usersModal();
+        else if (act === 'export-current') exportCurrentEvent();
+        else if (act === 'export-all') exportAllEvents();
+        else if (act === 'backup') downloadBackup();
+        else if (act === 'restore') restoreBackupModal();
+      });
+    });
+    document.addEventListener('click', () => adminMenu.classList.remove('open'));
+  }
 
   const root = document.getElementById('app');
   root.insertAdjacentHTML('beforeend', `
@@ -401,7 +430,7 @@ const TABS = [
   ['speakers', 'tab.speakers', 'mic'],
   ['workshops', 'tab.workshops', 'briefcase'],
   ['adventures', 'tab.adventures', 'compass'],
-  ['shows', 'tab.shows', 'video'],
+  ['shows', 'tab.schedule', 'video'],
   ['meetings', 'tab.meetings', 'calendarCheck'],
   ['participants', 'tab.participants', 'userPlus'],
   ['guests', 'tab.guests', 'star'],
@@ -429,7 +458,17 @@ async function renderEventPage(id, tab) {
     <div class="topbar">
       <button class="back-link" id="back-btn">${icon('back', 16)} ${esc(t('all.events'))}</button>
       <div class="topbar-actions">
-        ${isAdmin() ? `<button class="btn btn-sm" id="users-btn">${icon('users', 14)} ${esc(t('users'))}</button>` : ''}
+        ${isAdmin() ? `
+          <div class="dropdown">
+            <button class="btn btn-sm dropdown-toggle" id="admin-btn">${icon('settings', 14)} ${esc(t('admin'))}</button>
+            <div class="dropdown-menu" id="admin-menu">
+              <button class="dropdown-item" data-act="users">${icon('users', 13)} ${esc(t('users'))}</button>
+              <button class="dropdown-item" data-act="export-current">${icon('download', 13)} ${esc(t('admin.export.current'))}</button>
+              <button class="dropdown-item" data-act="export-all">${icon('download', 13)} ${esc(t('admin.export.all'))}</button>
+              <button class="dropdown-item" data-act="backup">${icon('database', 13)} ${esc(t('admin.backup'))}</button>
+              <button class="dropdown-item" data-act="restore">${icon('upload', 13)} ${esc(t('admin.restore'))}</button>
+            </div>
+          </div>` : ''}
         <button class="btn btn-sm" id="pw-btn">${esc(t('change.password'))}</button>
         <button class="btn btn-sm" id="logout-btn">${esc(t('logout'))}</button>
         ${langToggleHTML()}
@@ -463,6 +502,23 @@ async function renderEventPage(id, tab) {
   if (pwBtn) pwBtn.addEventListener('click', changePasswordModal);
   const modulesBtn = document.getElementById('modules-btn');
   if (modulesBtn) modulesBtn.addEventListener('click', modulesModal);
+  const adminBtn = document.getElementById('admin-btn');
+  const adminMenu = document.getElementById('admin-menu');
+  if (adminBtn && adminMenu) {
+    adminBtn.addEventListener('click', (e) => { e.stopPropagation(); adminMenu.classList.toggle('open'); });
+    adminMenu.querySelectorAll('.dropdown-item').forEach(item => {
+      item.addEventListener('click', () => {
+        adminMenu.classList.remove('open');
+        const act = item.dataset.act;
+        if (act === 'users') usersModal();
+        else if (act === 'export-current') exportCurrentEvent();
+        else if (act === 'export-all') exportAllEvents();
+        else if (act === 'backup') downloadBackup();
+        else if (act === 'restore') restoreBackupModal();
+      });
+    });
+    document.addEventListener('click', () => adminMenu.classList.remove('open'));
+  }
 
   if (!isAdmin()) {
     document.getElementById('edit-event-btn').style.display = 'none';
@@ -2699,7 +2755,7 @@ const ALL_TABS = [
   ['speakers', 'tab.speakers'],
   ['workshops', 'tab.workshops'],
   ['adventures', 'tab.adventures'],
-  ['shows', 'tab.shows'],
+  ['shows', 'tab.schedule'],
   ['meetings', 'tab.meetings'],
   ['participants', 'tab.participants'],
   ['guests', 'tab.guests'],
@@ -3002,6 +3058,90 @@ function changePasswordModal() {
           closeModal();
         } catch (e) {
           toast(e.message || t('current.password.incorrect'));
+        }
+      });
+    } }
+  );
+}
+
+async function exportCurrentEvent() {
+  if (!currentEvent) return toast(t('event.notfound'));
+  try {
+    const data = await api.exportEvent(currentEvent.id);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `export-event-${currentEvent.id}-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast(t('admin.export.downloaded'));
+  } catch (e) {
+    toast(e.message || 'Export failed');
+  }
+}
+
+async function exportAllEvents() {
+  try {
+    const data = await api.exportAll();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `export-all-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast(t('admin.export.downloaded'));
+  } catch (e) {
+    toast(e.message || 'Export failed');
+  }
+}
+
+async function downloadBackup() {
+  try {
+    const { blob, filename } = await api.downloadBackup();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast(t('admin.backup.downloaded'));
+  } catch (e) {
+    toast(e.message || 'Backup download failed');
+  }
+}
+
+function restoreBackupModal() {
+  openModal(
+    '<h3>' + esc(t('admin.restore')) + '</h3>'
+    + '<div class="modal-hint">' + esc(t('admin.restore.confirm')) + '</div>'
+    + '<div class="field"><label>' + esc(t('backup.file')) + '</label><input type="file" id="restore-file" accept=".zip" /></div>'
+    + '<div class="modal-actions">'
+    + '<button class="btn" data-close>' + esc(t('cancel')) + '</button>'
+    + '<button class="btn btn-primary" id="restore-confirm">' + esc(t('admin.restore')) + '</button>'
+    + '</div>',
+    { onOpen(overlay) {
+      overlay.querySelector('#restore-confirm').addEventListener('click', async () => {
+        const file = overlay.querySelector('#restore-file').files[0];
+        if (!file) return toast('Please select a backup zip file');
+        const btn = overlay.querySelector('#restore-confirm');
+        btn.disabled = true;
+        btn.textContent = '...';
+        try {
+          const result = await api.uploadBackup(file);
+          toast(t('admin.restore.success', { n: result.importedEvents }));
+          closeModal();
+          if (location.hash.startsWith('#/event/')) {
+            const id = Number(location.hash.split('/')[2]);
+            currentEvent = await api.event(id);
+            renderTabs();
+          }
+        } catch (e) {
+          toast(e.message || 'Restore failed');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = esc(t('admin.restore'));
         }
       });
     } }

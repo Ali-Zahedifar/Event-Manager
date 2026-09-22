@@ -82,4 +82,19 @@ const api = {
 
   myTasks: () => request('GET', '/api/my-tasks'),
   assigneeUsers: () => request('GET', '/api/assignee-users'),
+
+  exportEvent: (id) => request('GET', '/api/admin/export/' + id),
+  exportAll: () => request('GET', '/api/admin/export/all'),
+  exportList: () => request('GET', '/api/admin/export'),
+  downloadBackup: () => fetch('/api/admin/backup').then(r => {
+    if (!r.ok) throw new Error(r.statusText);
+    const disposition = r.headers.get('content-disposition');
+    const filename = disposition?.match(/filename="(.+)"/)?.[1] || 'backup.zip';
+    return r.blob().then(b => ({ blob: b, filename }));
+  }),
+  uploadBackup: (file) => {
+    const form = new FormData();
+    form.append('backup', file);
+    return fetch('/api/admin/restore', { method: 'POST', body: form }).then(r => r.json());
+  }
 };

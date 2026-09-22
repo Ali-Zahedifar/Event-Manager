@@ -1541,6 +1541,198 @@ function deleteMeeting(eventId, meetingId) {
   return true;
 }
 
+function exportEvent(eventId) {
+  const ev = getEvent(eventId);
+  if (!ev) return null;
+  return {
+    event: ev,
+    meta: { exportedAt: new Date().toISOString(), version: '1.0', eventId }
+  };
+}
+
+function exportAllEvents() {
+  const events = listEvents();
+  const all = [];
+  for (const ev of events) {
+    all.push(exportEvent(ev.id));
+  }
+  return { events: all, meta: { exportedAt: new Date().toISOString(), version: '1.0', eventCount: all.length } };
+}
+
+function exportUsers() {
+  const users = db.prepare('SELECT id, username, role, permissions, created_at FROM users ORDER BY id').all();
+  for (const u of users) {
+    u.eventIds = getEventAccess(u.id);
+  }
+  return users;
+}
+
+function importEvents(data, mode = 'new') {
+  const imported = [];
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const suffix = `_restored_${timestamp}`;
+
+  for (const exp of data.events || []) {
+    const ev = exp.event;
+    if (!ev) continue;
+
+    let newEventId;
+    if (mode === 'new') {
+      const newName = (ev.name || 'Untitled') + suffix;
+      const created = createEvent({
+        name: newName,
+        description: ev.description,
+        date: ev.date,
+        location: ev.location,
+        critical_info: ev.critical_info,
+        status: ev.status,
+        features: ev.features
+      });
+      newEventId = created.id;
+    } else if (mode === 'replace') {
+      deleteEvent(ev.id);
+      const created = createEvent({
+        name: ev.name,
+        description: ev.description,
+        date: ev.date,
+        location: ev.location,
+        critical_info: ev.critical_info,
+        status: ev.status,
+        features: ev.features
+      });
+      newEventId = created.id;
+    } else if (mode === 'merge') {
+      const existing = db.prepare('SELECT id FROM events WHERE name = ?').get(ev.name);
+      if (existing) {
+        newEventId = existing.id;
+        updateEvent(newEventId, {
+          name: ev.name,
+          description: ev.description,
+          date: ev.date,
+          location: ev.location,
+          critical_info: ev.critical_info,
+          status: ev.status,
+          features: ev.features
+        });
+      } else {
+        const created = createEvent({
+          name: ev.name,
+          description: ev.description,
+          date: ev.date,
+          location: ev.location,
+          critical_info: ev.critical_info,
+          status: ev.status,
+          features: ev.features
+        });
+        newEventId = created.id;
+      }
+    }
+    if (!newEventId) continue;
+
+    const copyTable = (table, rows, fk = 'event_id', extra = {}) => {
+      if (!rows || !rows.length) return;
+      const cols = Object.keys(rows[0]).filter(k => k !== 'id');
+      const placeholders = cols.map(() => '?').join(',');
+      const stmt = db.prepare(`INSERT INTO ${table} (${cols.join(',')}, ${fk}) VALUES (${placeholders}, ?)`);
+      for (const r of rows) {
+        const vals = cols.map(c => r[c] ?? '');
+        stmt.run(...vals, newEventId, ...Object.values(extra));
+      }
+    };
+
+    copyTable('members', ev.members);
+    copyTable('tasks', ev.tasks);
+    copyTable('sponsors', ev.sponsors);
+    copyTable('timeline_items', ev.timeline);
+    copyTable('files', ev.files);
+    copyTable('transactions', ev.finances);
+    copyTable('budget_items', ev.budget);
+    copyTable('design_locations', ev.design?.locations || []);
+    copyTable('design_plans', ev.design?.plans || []);
+    copyTable('participants', ev.participants);
+    copyTable('guests', ev.guests);
+    copyTable('speakers', ev.speakers);
+    copyTable('workshops', ev.workshops);
+    copyTable('adventures', ev.adventures);
+    copyTable('shows', ev.shows);
+    copyTable('show_segments', ev.shows?.flatMap(s => s.segments || []) || [], 'show_id');
+    copyTable('meetings', ev.meetings);
+    copyTable('meeting_attendees', ev.meetings?.flatMap(m => m.attendees || []) || [], 'meeting_id');
+    copyTable('task_members', ev.tasks?.flatMap(t => t.memberIds?.map(mid => ({ member_id: mid, task_id: t.id })) || []) || [], 'task_id');
+
+    imported.push({ oldId: ev.id, newId: newEventId, name: ev.name });
+  }
+  return imported;
+}
+
+function importUsers(users) {
+  const results = { created: 0, skipped: 0 };
+  for (const u of users || []) {
+    const exists = db.prepare('SELECT id FROM users WHERE username = ?').get(u.username);
+    if (exists) { results.skipped++; continue; }
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = require('crypto').createHash('sha256').update('changeme123' + salt).digest('hex');
+    db.prepare('INSERT INTO users (username, password_hash, salt, role, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(u.username, hash, salt, u.role === 'admin' ? 'custom' : u.role, u.permissions || '[]', u.created_at || now());
+    results.created++;
+  }
+  return results;
+}
+
+function backupToZip() {
+  const archiver = require('archiver');
+  const archive = archiver('zip', { zlib: { level: 6 } });
+  const chunks = [];
+
+  archive.on('data', chunk => chunks.push(chunk));
+
+  const exportData = exportAllEvents();
+  archive.append(JSON.stringify(exportData, null, 2), { name: 'events.json' });
+
+  const users = exportUsers();
+  archive.append(JSON.stringify(users, null, 2), { name: 'users.json' });
+
+  const FILES_ROOT = path.join(DATA_ROOT, 'files');
+  if (fs.existsSync(FILES_ROOT)) {
+    archive.directory(FILES_ROOT, false, 'files/');
+  }
+
+  return new Promise((resolve, reject) => {
+    archive.on('end', () => resolve(Buffer.concat(chunks)));
+    archive.on('error', reject);
+    archive.finalize();
+  });
+}
+
+async function restoreFromZip(zipBuffer) {
+  const AdmZip = require('adm-zip');
+  const zip = new AdmZip(zipBuffer);
+  const entries = zip.getEntries();
+  const eventsEntry = entries.find(e => e.entryName === 'events.json');
+  const usersEntry = entries.find(e => e.entryName === 'users.json');
+  if (!eventsEntry) throw new Error('Invalid backup: missing events.json');
+
+  const exportData = JSON.parse(eventsEntry.getData().toString('utf8'));
+  const imported = importEvents(exportData, 'new');
+
+  if (usersEntry) {
+    const users = JSON.parse(usersEntry.getData().toString('utf8'));
+    importUsers(users);
+  }
+
+  const FILES_ROOT = path.join(DATA_ROOT, 'files');
+  fs.mkdirSync(FILES_ROOT, { recursive: true });
+  for (const entry of entries) {
+    if (entry.entryName.startsWith('files/') && !entry.isDirectory) {
+      const destPath = path.join(FILES_ROOT, entry.entryName.replace('files/', ''));
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      fs.writeFileSync(destPath, entry.getData());
+    }
+  }
+
+  return { importedEvents: imported.length };
+}
+
 module.exports = {
   db,
   listEvents,
@@ -1621,4 +1813,9 @@ module.exports = {
   setTaskAssignees,
   getMyTasks,
   getAssigneeUsers,
+  exportEvent,
+  exportAllEvents,
+  importEvents,
+  backupToZip,
+  restoreFromZip,
 };

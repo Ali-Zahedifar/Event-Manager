@@ -400,6 +400,80 @@ async function handleUsers(req, res, pathname, method) {
   return null;
 }
 
+async function handleAdminExport(req, res, pathname, method) {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  if (pathname === '/api/admin/export' && method === 'GET') {
+    const events = dbm.listEvents();
+    return sendJson(res, 200, events.map(e => ({ id: e.id, name: e.name, date: e.date, status: e.status, memberCount: e.memberCount, taskCount: e.taskCount })));
+  }
+  if (pathname === '/api/admin/export/all' && method === 'GET') {
+    const data = dbm.exportAllEvents();
+    res.setHeader('Content-Disposition', 'attachment; filename="export-all-' + new Date().toISOString().slice(0,10) + '.json"');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    return res.end(JSON.stringify(data, null, 2));
+  }
+  const expMatch = pathname.match(/^\/api\/admin\/export\/(\d+)$/);
+  if (expMatch && method === 'GET') {
+    const eventId = Number(expMatch[1]);
+    const data = dbm.exportEvent(eventId);
+    if (!data) return sendError(res, 404, 'Event not found');
+    res.setHeader('Content-Disposition', 'attachment; filename="export-event-' + eventId + '-' + new Date().toISOString().slice(0,10) + '.json"');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    return res.end(JSON.stringify(data, null, 2));
+  }
+  return null;
+}
+
+async function handleAdminBackup(req, res, pathname, method) {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  if (pathname === '/api/admin/backup' && method === 'GET') {
+    try {
+      const zipBuffer = await dbm.backupToZip();
+      res.setHeader('Content-Disposition', 'attachment; filename="backup-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0,19) + '.zip"');
+      res.setHeader('Content-Type', 'application/zip');
+      return res.end(zipBuffer);
+    } catch (e) {
+      console.error('[BACKUP ERROR]', e);
+      return sendError(res, 500, 'Backup failed: ' + e.message);
+    }
+  }
+  if (pathname === '/api/admin/restore' && method === 'POST') {
+    const contentType = req.headers['content-type'] || '';
+    if (!contentType.includes('multipart/form-data')) {
+      return sendError(res, 400, 'Expected multipart/form-data');
+    }
+    const boundary = contentType.split('boundary=')[1];
+    if (!boundary) return sendError(res, 400, 'Missing boundary');
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = Buffer.concat(chunks);
+    const parts = body.toString('binary').split('--' + boundary);
+    let fileBuffer = null;
+    for (const part of parts) {
+      if (part.includes('filename=') && part.includes('application/zip')) {
+        const headerEnd = part.indexOf('\r\n\r\n');
+        if (headerEnd !== -1) {
+          fileBuffer = Buffer.from(part.slice(headerEnd + 4, part.lastIndexOf('\r\n')), 'binary');
+          break;
+        }
+      }
+    }
+    if (!fileBuffer) return sendError(res, 400, 'No zip file found in upload');
+    try {
+      const result = await dbm.restoreFromZip(fileBuffer);
+      return sendJson(res, 200, { ok: true, ...result });
+    } catch (e) {
+      console.error('[RESTORE ERROR]', e);
+      return sendError(res, 500, 'Restore failed: ' + e.message);
+    }
+  }
+  return null;
+}
+
 async function handleApi(req, res, pathname) {
   const method = req.method;
 
@@ -416,6 +490,12 @@ async function handleApi(req, res, pathname) {
     if (result !== null) return;
     return notFound(res);
   }
+
+  // Admin export/backup/restore routes
+  const adminResult = await handleAdminExport(req, res, pathname, method);
+  if (adminResult !== null) return;
+  const backupResult = await handleAdminBackup(req, res, pathname, method);
+  if (backupResult !== null) return;
 
   // All remaining /api/ routes require authentication
   const user = await requireAuth(req, res);

@@ -9,5 +9,9 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "adm-zip": "^0.5.16"
+  }
 }
