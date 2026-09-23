@@ -560,12 +560,12 @@ function renderTabStrip() {
   const tabs = visibleTabs();
   const cur = currentTab;
   return `${tabs.length ? TABS.filter(([k]) => tabs.includes(k)).map(([k, label, ic]) =>
-    `<button class="tab-pill ${k === cur ? 'active' : ''}" data-tab="${k}">${icon(ic, 16)} <span>${esc(t(label))}</span></button>`
-  ).join('') : `<span class="tab-empty">${esc(t('modules.none'))}</span>`}`;
+    `<button class="nav-item ${k === cur ? 'active' : ''}" data-tab="${k}">${icon(ic, 16)} <span>${esc(t(label))}</span></button>`
+  ).join('') : `<span class="nav-empty">${esc(t('modules.none'))}</span>`}`;
 }
 
 function bindTabStrip() {
-  document.querySelectorAll('#ev-nav .tab-pill').forEach((tb) =>
+  document.querySelectorAll('#ev-nav .nav-item').forEach((tb) =>
     tb.addEventListener('click', () => {
       const k = tb.dataset.tab;
       if (k !== currentTab) location.hash = `#/event/${currentEvent.id}/${k}`;
@@ -574,7 +574,7 @@ function bindTabStrip() {
 }
 
 function scrollActiveTabIntoView() {
-  const active = document.querySelector('#ev-nav .tab-pill.active');
+  const active = document.querySelector('#ev-nav .nav-item.active');
   if (active) active.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
 }
 
@@ -3055,6 +3055,7 @@ async function userFormModal(existing) {
           await request('POST', '/api/users', body);
           toast(t('user.added'));
         }
+        await refreshAuth();
         closeModal();
         usersModal();
       });

@@ -74,3 +74,14 @@ async function logout() {
   await fetch('/api/auth/logout', { method: 'POST' });
   window.location = '/login';
 }
+
+async function refreshAuth() {
+  try {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) return false;
+    AUTH_USER = await res.json();
+    return true;
+  } catch {
+    return false;
+  }
+}
