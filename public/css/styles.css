@@ -46,6 +46,64 @@ a { color: var(--accent); text-decoration: none; }
   padding: 0 24px 60px;
 }
 
+/* ---------- Theme controls (topbar) ---------- */
+.theme-mode-btn {
+  color: var(--muted);
+}
+.theme-mode-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.theme-menu {
+  min-width: 215px;
+  right: auto;
+  inset-inline-end: 0;
+}
+.dropdown-item.active {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}
+.dropdown-check {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: auto;
+}
+.dropdown-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}
+
+/* ---------- Custom palette modal ---------- */
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.color-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.color-label {
+  flex: 1 1 120px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.color-input {
+  width: 34px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -79,13 +137,13 @@ a { color: var(--accent); text-decoration: none; }
   transition: all .15s ease;
   white-space: nowrap;
 }
-.btn:hover { background: #f8fafc; border-color: #d3d9e4; }
+.btn:hover { background: var(--bg-soft); border-color: var(--border); }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn-primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 .btn-danger { color: var(--red); border-color: #f3c2c2; }
 .btn-danger:hover { background: var(--red-soft); border-color: var(--red); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
-.btn-ghost:hover { background: #f1f3f8; color: var(--text); }
+.btn-ghost:hover { background: var(--bg-soft); color: var(--text); }
 .btn-sm { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
 .btn-icon { padding: 6px 9px; }
 .btn[disabled] { opacity: .5; cursor: not-allowed; }
@@ -117,7 +175,7 @@ a { color: var(--accent); text-decoration: none; }
   font-size: 14px;
   font-weight: 500;
   border-radius: 8px;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   transition: background .15s ease;
 }

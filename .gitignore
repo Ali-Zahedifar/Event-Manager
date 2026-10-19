@@ -5,6 +5,7 @@ events.db-wal
 data/db/events.db
 data/db/events.db-shm
 data/db/events.db-wal
+data/db/events.db.pre-legacy-*
 data/files/
 *.log
 .DS_Store

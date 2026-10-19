@@ -4,7 +4,8 @@
   "description": "Local web app to manage events: teams, tasks, sponsors, critical info and timelines",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=22.13.0"

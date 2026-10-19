@@ -21,6 +21,66 @@ const DATA_DIR = path.join(DATA_ROOT, 'db');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const DB_PATH = path.join(DATA_DIR, 'events.db');
+const LEGACY_DB_PATH = process.env.LEGACY_DB ? path.resolve(process.env.LEGACY_DB) : path.join(__dirname, 'events.db');
+
+// Inspect a SQLite file without creating it.
+function inspectDbFile(file) {
+  if (!fs.existsSync(file)) return { exists: false, events: 0, flagged: false };
+  let conn;
+  try {
+    conn = new DatabaseSync(file);
+    const hasEvents = !!conn.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events'").get();
+    const events = hasEvents ? conn.prepare('SELECT COUNT(*) AS c FROM events').get().c : 0;
+    let flagged = false;
+    try { flagged = !!conn.prepare("SELECT 1 FROM meta WHERE key = 'legacy_import_v1'").get(); } catch { /* no meta table */ }
+    return { exists: true, events, flagged };
+  } catch (e) {
+    return { exists: true, events: 0, flagged: false, error: e.message };
+  } finally {
+    try { if (conn) conn.close(); } catch { /* ignore */ }
+  }
+}
+
+// One-time adoption of a database created by the pre-data/ version of the app.
+// Older builds kept events.db next to server.js; newer builds use data/db/events.db.
+// We only adopt when the target is empty, and the old file is kept as a backup.
+function adoptLegacyDatabase() {
+  if (LEGACY_DB_PATH === DB_PATH) return false;
+  const target = inspectDbFile(DB_PATH);
+  const legacy = inspectDbFile(LEGACY_DB_PATH);
+  if (target.flagged || target.events > 0 || legacy.events === 0) return false;
+
+  const backupPath = `${DB_PATH}.pre-legacy-${Date.now()}`;
+  let movedTarget = false;
+  try {
+    if (fs.existsSync(DB_PATH)) {
+      fs.renameSync(DB_PATH, backupPath);
+      for (const ext of ['-wal', '-shm']) {
+        if (fs.existsSync(DB_PATH + ext)) fs.renameSync(DB_PATH + ext, backupPath + ext);
+      }
+      movedTarget = true;
+    }
+    const src = new DatabaseSync(LEGACY_DB_PATH);
+    try {
+      // Fold any pending WAL pages into the main file before copying.
+      src.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      src.exec(`VACUUM INTO '${DB_PATH.replace(/'/g, "''")}'`);
+    } finally {
+      src.close();
+    }
+    console.log(`[MIGRATE] Imported legacy database ${LEGACY_DB_PATH} -> ${DB_PATH}`);
+    if (movedTarget) console.log(`[MIGRATE] Previous empty database kept at ${backupPath}`);
+    return true;
+  } catch (e) {
+    console.error('[MIGRATE] Legacy database import failed:', e.message);
+    if (movedTarget && !fs.existsSync(DB_PATH) && fs.existsSync(backupPath)) {
+      try { fs.renameSync(backupPath, DB_PATH); } catch { /* ignore */ }
+    }
+    return false;
+  }
+}
+
+const LEGACY_ADOPTED = adoptLegacyDatabase();
 
 const db = new DatabaseSync(DB_PATH);
 
@@ -330,6 +390,12 @@ ensureColumn('transactions', 'file_path', "TEXT DEFAULT ''");
 ensureColumn('budget_items', 'funding', "TEXT NOT NULL DEFAULT 'cash'");
 ensureColumn('events', 'features', "TEXT DEFAULT '[]'");
 
+// Remember that the legacy database was adopted so deleting every event later
+// does not trigger another import on the next boot.
+if (LEGACY_ADOPTED) {
+  db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('legacy_import_v1', '1');
+}
+
 // One-time currency migration: existing amounts are stored in units of "million
 // tooman" (1 unit = 1,000,000 tooman). On first boot after this version they are
 // converted to plain tooman and a meta flag prevents the conversion from rerunning.
@@ -373,6 +439,15 @@ if (db.prepare('SELECT value FROM meta WHERE key = ?').get(SPONSOR_MONEY_FLAG) =
 // ---------- file storage helpers ----------
 const FILES_ROOT = path.join(DATA_ROOT, 'files');
 const MAX_FILE = 50 * 1024 * 1024;
+const MIME_BY_EXT = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.svg': 'image/svg+xml', '.pdf': 'application/pdf',
+  '.txt': 'text/plain', '.csv': 'text/csv', '.json': 'application/json',
+  '.zip': 'application/zip', '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
 
 function safeFileName(name) {
   const base = path.basename(String(name || 'file').replace(/[\\/]/g, '_')).replace(/[^\w.\- ()]/g, '_').trim() || 'file';
@@ -604,7 +679,7 @@ function getEvent(id) {
   const meetings = db.prepare('SELECT * FROM meetings WHERE event_id = ? ORDER BY id').all(id);
   for (const mt of meetings) {
     mt.agenda = parseJsonList(mt.agenda);
-    mt.attendees = db.prepare('SELECT * FROM meeting_attendees WHERE meeting_id = ? ORDER BY id').all(mt.meeting_id);
+    mt.attendees = db.prepare('SELECT * FROM meeting_attendees WHERE meeting_id = ? ORDER BY id').all(mt.id);
   }
 
   const tasks = db.prepare('SELECT * FROM tasks WHERE event_id = ? ORDER BY id').all(id);
@@ -1567,98 +1642,219 @@ function exportUsers() {
   return users;
 }
 
+function insertImported(table, data) {
+  const cols = Object.keys(data);
+  const stmt = db.prepare(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`);
+  const info = stmt.run(...cols.map((c) => data[c] ?? ''));
+  return Number(info.lastInsertRowid);
+}
+
+// Import exported events while remapping every row id. Foreign keys (task members,
+// meeting attendees, show locations, ...) point at the newly created rows, and the
+// attachments are restored separately from the zip by restoreFromZip().
 function importEvents(data, mode = 'new') {
   const imported = [];
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const suffix = `_restored_${timestamp}`;
 
   for (const exp of data.events || []) {
-    const ev = exp.event;
-    if (!ev) continue;
+    const ev = (exp && exp.event) || exp;
+    if (!ev || !ev.name) continue;
+
+    const eventFields = {
+      name: ev.name,
+      description: ev.description,
+      date: ev.date,
+      location: ev.location,
+      critical_info: ev.critical_info,
+      status: ev.status,
+      features: Array.isArray(ev.features) ? ev.features : [],
+    };
 
     let newEventId;
-    if (mode === 'new') {
-      const newName = (ev.name || 'Untitled') + suffix;
-      const created = createEvent({
-        name: newName,
-        description: ev.description,
-        date: ev.date,
-        location: ev.location,
-        critical_info: ev.critical_info,
-        status: ev.status,
-        features: ev.features
-      });
-      newEventId = created.id;
-    } else if (mode === 'replace') {
+    if (mode === 'replace') {
       deleteEvent(ev.id);
-      const created = createEvent({
-        name: ev.name,
-        description: ev.description,
-        date: ev.date,
-        location: ev.location,
-        critical_info: ev.critical_info,
-        status: ev.status,
-        features: ev.features
-      });
-      newEventId = created.id;
+      newEventId = createEvent(eventFields).id;
     } else if (mode === 'merge') {
       const existing = db.prepare('SELECT id FROM events WHERE name = ?').get(ev.name);
       if (existing) {
         newEventId = existing.id;
-        updateEvent(newEventId, {
-          name: ev.name,
-          description: ev.description,
-          date: ev.date,
-          location: ev.location,
-          critical_info: ev.critical_info,
-          status: ev.status,
-          features: ev.features
-        });
+        updateEvent(newEventId, eventFields);
       } else {
-        const created = createEvent({
-          name: ev.name,
-          description: ev.description,
-          date: ev.date,
-          location: ev.location,
-          critical_info: ev.critical_info,
-          status: ev.status,
-          features: ev.features
-        });
-        newEventId = created.id;
+        newEventId = createEvent(eventFields).id;
       }
+    } else {
+      newEventId = createEvent({ ...eventFields, name: `${ev.name}${suffix}` }).id;
     }
     if (!newEventId) continue;
 
-    const copyTable = (table, rows, fk = 'event_id', extra = {}) => {
-      if (!rows || !rows.length) return;
-      const cols = Object.keys(rows[0]).filter(k => k !== 'id');
-      const placeholders = cols.map(() => '?').join(',');
-      const stmt = db.prepare(`INSERT INTO ${table} (${cols.join(',')}, ${fk}) VALUES (${placeholders}, ?)`);
-      for (const r of rows) {
-        const vals = cols.map(c => r[c] ?? '');
-        stmt.run(...vals, newEventId, ...Object.values(extra));
-      }
-    };
+    // People / sources are imported first so meeting attendees can be remapped.
+    const participantMap = new Map();
+    for (const p of ev.participants || []) {
+      const id = insertImported('participants', {
+        event_id: newEventId, type: p.type, name: p.name, organization: p.organization,
+        contact: p.contact, notes: p.notes,
+      });
+      participantMap.set(Number(p.id), id);
+    }
 
-    copyTable('members', ev.members);
-    copyTable('tasks', ev.tasks);
-    copyTable('sponsors', ev.sponsors);
-    copyTable('timeline_items', ev.timeline);
-    copyTable('files', ev.files);
-    copyTable('transactions', ev.finances);
-    copyTable('budget_items', ev.budget);
-    copyTable('design_locations', ev.design?.locations || []);
-    copyTable('design_plans', ev.design?.plans || []);
-    copyTable('participants', ev.participants);
-    copyTable('guests', ev.guests);
-    copyTable('speakers', ev.speakers);
-    copyTable('workshops', ev.workshops);
-    copyTable('adventures', ev.adventures);
-    copyTable('shows', ev.shows);
-    copyTable('show_segments', ev.shows?.flatMap(s => s.segments || []) || [], 'show_id');
-    copyTable('meetings', ev.meetings);
-    copyTable('meeting_attendees', ev.meetings?.flatMap(m => m.attendees || []) || [], 'meeting_id');
-    copyTable('task_members', ev.tasks?.flatMap(t => t.memberIds?.map(mid => ({ member_id: mid, task_id: t.id })) || []) || [], 'task_id');
+    const guestMap = new Map();
+    for (const g of ev.guests || []) {
+      const id = insertImported('guests', {
+        event_id: newEventId, name: g.name, contact: g.contact, status: g.status,
+        guests_count: Math.max(1, Number(g.guests_count) || 1), notes: g.notes,
+      });
+      guestMap.set(Number(g.id), id);
+    }
+
+    const speakerMap = new Map();
+    for (const s of ev.speakers || []) {
+      const id = insertImported('speakers', {
+        event_id: newEventId, name: s.name, title: s.title, organization: s.organization,
+        topic: s.topic, contact: s.contact, bio: s.bio, status: s.status, notes: s.notes,
+        created_at: s.created_at || now(),
+      });
+      speakerMap.set(Number(s.id), id);
+    }
+
+    const memberMap = new Map();
+    for (const m of ev.members || []) {
+      const id = insertImported('members', {
+        event_id: newEventId, name: m.name, role: m.role, id_number: m.id_number,
+        phone: m.phone, photo: m.photo, notes: m.notes, section: m.section,
+        section_head: m.section_head ? 1 : 0,
+      });
+      memberMap.set(Number(m.id), id);
+    }
+
+    const taskMap = new Map();
+    for (const task of ev.tasks || []) {
+      const id = insertImported('tasks', {
+        event_id: newEventId, title: task.title, description: task.description,
+        status: task.status, importance: task.importance, due_date: task.due_date,
+      });
+      taskMap.set(Number(task.id), id);
+
+      const memberIds = Array.isArray(task.memberIds) ? task.memberIds : [];
+      for (const oldMemberId of memberIds) {
+        const newMemberId = memberMap.get(Number(oldMemberId));
+        if (newMemberId) {
+          db.prepare('INSERT OR IGNORE INTO task_members (task_id, member_id) VALUES (?, ?)').run(id, newMemberId);
+        }
+      }
+    }
+
+    for (const s of ev.sponsors || []) {
+      insertImported('sponsors', {
+        event_id: newEventId, name: s.name, company: s.company, email: s.email, phone: s.phone,
+        contribution_type: s.contribution_type, contribution_amount: s.contribution_amount,
+        description: s.description, status: s.status, notes: s.notes,
+      });
+    }
+
+    for (const item of ev.timeline || []) {
+      insertImported('timeline_items', {
+        event_id: newEventId, title: item.title, description: item.description,
+        datetime: item.datetime, category: item.category, done: item.done ? 1 : 0,
+      });
+    }
+
+    // Files rows are recreated by restoreFromZip() because stored_path must be
+    // rewritten to the new event folder.
+    for (const f of ev.finances || []) {
+      insertImported('transactions', {
+        event_id: newEventId, type: f.type, title: f.title, amount: Number(f.amount) || 0,
+        category: f.category, date: f.date, notes: f.notes, file_name: f.file_name,
+        file_mime: f.file_mime, file_size: Number(f.file_size) || 0, file_path: '',
+        created_at: f.created_at || now(),
+      });
+    }
+
+    for (const b of ev.budget || []) {
+      insertImported('budget_items', {
+        event_id: newEventId, type: b.type, category: b.category,
+        amount: Number(b.amount) || 0, notes: b.notes, funding: b.funding,
+        created_at: b.created_at || now(),
+      });
+    }
+
+    const locationMap = new Map();
+    for (const loc of (ev.design && ev.design.locations) || []) {
+      const id = insertImported('design_locations', {
+        event_id: newEventId, name: loc.name, address: loc.address, notes: loc.notes,
+        created_at: loc.created_at || now(),
+      });
+      locationMap.set(Number(loc.id), id);
+    }
+
+    for (const plan of (ev.design && ev.design.plans) || []) {
+      const newLocationId = locationMap.get(Number(plan.location_id));
+      if (!newLocationId) continue;
+      insertImported('design_plans', {
+        event_id: newEventId, location_id: newLocationId, title: plan.title,
+        scenario: plan.scenario, description: plan.description,
+        created_at: plan.created_at || now(),
+      });
+    }
+
+    for (const w of ev.workshops || []) {
+      insertImported('workshops', {
+        event_id: newEventId, title: w.title, host: w.host, description: w.description,
+        date: w.date, time_start: w.time_start, time_end: w.time_end, location: w.location,
+        capacity: Math.max(0, Number(w.capacity) || 0), status: w.status, notes: w.notes,
+        created_at: w.created_at || now(),
+      });
+    }
+
+    for (const a of ev.adventures || []) {
+      insertImported('adventures', {
+        event_id: newEventId, name: a.name, type: a.type, description: a.description,
+        date: a.date, time_start: a.time_start, time_end: a.time_end, location: a.location,
+        cost: Math.max(0, Number(a.cost) || 0), capacity: Math.max(0, Number(a.capacity) || 0),
+        status: a.status, notes: a.notes, created_at: a.created_at || now(),
+      });
+    }
+
+    for (const sh of ev.shows || []) {
+      const showId = insertImported('shows', {
+        event_id: newEventId, name: sh.name, type: sh.type, description: sh.description,
+        date: sh.date, time_start: sh.time_start, time_end: sh.time_end,
+        duration: Math.max(0, Number(sh.duration) || 0),
+        location_id: locationMap.get(Number(sh.location_id)) || null,
+        venue: sh.venue, host: sh.host, status: sh.status,
+        cost: Math.max(0, Number(sh.cost) || 0),
+        equipment: JSON.stringify(Array.isArray(sh.equipment) ? sh.equipment : []),
+        notes: sh.notes, created_at: sh.created_at || now(),
+      });
+      (sh.segments || []).forEach((seg, i) => {
+        insertImported('show_segments', {
+          show_id: showId, position: i, name: seg.name,
+          duration: Math.max(0, Number(seg.duration) || 0), description: seg.description,
+        });
+      });
+    }
+
+    for (const mt of ev.meetings || []) {
+      const meetingId = insertImported('meetings', {
+        event_id: newEventId, title: mt.title, description: mt.description, date: mt.date,
+        time_start: mt.time_start, time_end: mt.time_end, location: mt.location,
+        status: mt.status, agenda: JSON.stringify(Array.isArray(mt.agenda) ? mt.agenda : []),
+        outcome: mt.outcome, notes: mt.notes, created_at: mt.created_at || now(),
+      });
+      for (const a of mt.attendees || []) {
+        const map = a.ref_type === 'member' ? memberMap
+          : a.ref_type === 'speaker' ? speakerMap
+          : a.ref_type === 'guest' ? guestMap
+          : a.ref_type === 'participant' ? participantMap
+          : null;
+        const oldRef = Number(a.ref_id);
+        insertImported('meeting_attendees', {
+          meeting_id: meetingId, event_id: newEventId, ref_type: a.ref_type,
+          ref_id: (map && map.get(oldRef)) || oldRef || 0,
+          label: a.label, status: a.status,
+        });
+      }
+    }
 
     imported.push({ oldId: ev.id, newId: newEventId, name: ev.name });
   }
@@ -1668,12 +1864,14 @@ function importEvents(data, mode = 'new') {
 function importUsers(users) {
   const results = { created: 0, skipped: 0 };
   for (const u of users || []) {
+    if (!u || !u.username) continue;
     const exists = db.prepare('SELECT id FROM users WHERE username = ?').get(u.username);
     if (exists) { results.skipped++; continue; }
-    const salt = crypto.randomBytes(16).toString('hex');
-    const hash = require('crypto').createHash('sha256').update('changeme123' + salt).digest('hex');
+    const salt = makeSalt();
+    // Restored accounts get a known temporary password; admins should change it.
+    const hash = hashPassword('changeme123', salt);
     db.prepare('INSERT INTO users (username, password_hash, salt, role, permissions, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(u.username, hash, salt, u.role === 'admin' ? 'custom' : u.role, u.permissions || '[]', u.created_at || now());
+      .run(u.username, hash, salt, String(u.role || 'viewer'), u.permissions || '[]', u.created_at || now());
     results.created++;
   }
   return results;
@@ -1694,7 +1892,7 @@ function backupToZip() {
 
   const FILES_ROOT = path.join(DATA_ROOT, 'files');
   if (fs.existsSync(FILES_ROOT)) {
-    archive.directory(FILES_ROOT, false, 'files/');
+    archive.directory(FILES_ROOT, 'files');
   }
 
   return new Promise((resolve, reject) => {
@@ -1720,14 +1918,45 @@ async function restoreFromZip(zipBuffer) {
     importUsers(users);
   }
 
-  const FILES_ROOT = path.join(DATA_ROOT, 'files');
+  const filesByOldEvent = new Map();
+  for (const exp of exportData.events || []) {
+    const ev = exp && exp.event;
+    if (ev) filesByOldEvent.set(Number(ev.id), ev.files || []);
+  }
+
+  const FILES_ROOT = path.resolve(DATA_ROOT, 'files');
   fs.mkdirSync(FILES_ROOT, { recursive: true });
+  const idMap = new Map(imported.map((x) => [Number(x.oldId), Number(x.newId)]));
+  const mimeFor = (name) => MIME_BY_EXT[path.extname(name).toLowerCase()] || 'application/octet-stream';
+
   for (const entry of entries) {
-    if (entry.entryName.startsWith('files/') && !entry.isDirectory) {
-      const destPath = path.join(FILES_ROOT, entry.entryName.replace('files/', ''));
-      fs.mkdirSync(path.dirname(destPath), { recursive: true });
-      fs.writeFileSync(destPath, entry.getData());
-    }
+    if (entry.isDirectory) continue;
+    const entryName = entry.entryName.replace(/\\/g, '/');
+    if (!entryName.startsWith('files/')) continue;
+    const rest = entryName.slice('files/'.length);
+    const slash = rest.indexOf('/');
+    if (slash <= 0) continue;
+    const oldEventId = Number(rest.slice(0, slash));
+    const newEventId = idMap.get(oldEventId);
+    if (!newEventId) continue;
+
+    const base = safeFileName(path.basename(rest.slice(slash + 1)));
+    const destDir = path.join(FILES_ROOT, String(newEventId));
+    const destPath = path.resolve(destDir, `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${base}`);
+    // Never allow a crafted zip entry to escape the data/files directory.
+    if (!destPath.startsWith(FILES_ROOT + path.sep)) continue;
+
+    const data = entry.getData();
+    fs.mkdirSync(destDir, { recursive: true });
+    fs.writeFileSync(destPath, data);
+
+    const meta = (filesByOldEvent.get(oldEventId) || []).find((f) => base.endsWith(safeFileName(f.name))) || {};
+    createFile(newEventId, {
+      name: meta.name || base,
+      mime: meta.mime || mimeFor(base),
+      size: data.length,
+      stored_path: destPath,
+    });
   }
 
   return { importedEvents: imported.length };
@@ -1735,6 +1964,7 @@ async function restoreFromZip(zipBuffer) {
 
 module.exports = {
   db,
+  dbPath: DB_PATH,
   listEvents,
   getEvent,
   createEvent,

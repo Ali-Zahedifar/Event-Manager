@@ -1,50 +1,111 @@
 # Event Manager
 
-A simple, local web app to plan and manage events. Run it on your laptop, open it in your browser, and all data stays on your machine.
+A local-first web app for planning events. It runs on your machine: one Node process, one
+SQLite database, no account with a cloud service, no internet required at runtime.
 
 ## Features
 
-Per event you can manage:
+Each event has its own workspace with these tabs (admins can switch modules off per event):
 
-- **Overview** — event details and a *critical information* section for important notes.
-- **Team** — members with name, role, ID number, phone, photo and notes.
-- **Tasks** — status (To do / In progress / Done), importance (Low / Medium / High / Critical), due dates, and appointment of team members.
-- **Sponsors** — contact info, contribution type (money / in-kind / services), amount, status and notes.
-- **Timeline** — a dated schedule with milestone / prep / deadline entries that can be marked done.
+- **Overview** — date, location, status, description and critical notes.
+- **Team** — members with role, section, section head, ID number, phone, photo and notes.
+- **Tasks** — To do / In progress / Done columns, importance, due dates, team members and
+  assignee users (assignees get a personal task list).
+- **Timeline** — milestones, preparation steps and deadlines with a done state.
+- **Design** — locations and per-location plans.
+- **Speakers, Workshops, Adventures** — programme participants and optional activities.
+- **Shows** — schedule, segments, equipment checklist and an optional design location.
+- **Meetings** — agenda, attendees (from team/speakers/guests/participants) and outcomes.
+- **Participants / Guests** — external people and teams with invite/attendance status.
+- **Sponsors** — contact details and money / in-kind / services contributions.
+- **Finances** — income and expenses in toman, optional receipt attachment.
+- **Budget** — planned amounts by category, funding source, actuals and variance.
+- **Files** — per-event attachments (up to 50 MB each), stored on disk.
+
+Other features:
+
+- **Roles:** admin, viewer (read-only), custom (view/edit per tab) and workflow specialist
+  (task list only). Access can be limited per event.
+- **Bilingual:** English and Persian (RTL), remembered between visits.
+- **Backups:** download a zip containing the data and attachments; restore it to create
+  copies of the events.
+- **Upgrades:** a database from an older version (root `events.db`) is imported automatically
+  once on first start.
 
 ## Requirements
 
-- Windows with **Node.js 22.13+** (LTS recommended). Install from https://nodejs.org
-- No other dependencies. No internet needed to run the app.
+- **Node.js 22.13 or newer** (Node 24 recommended; it uses the built-in `node:sqlite`).
+- No other services. `npm install` installs two zip libraries used only for backups.
 
 ## How to run
 
-**Option A (easiest):** double-click `start.bat`
+**Option A (easiest, Windows):** double-click `start.bat`
 
-**Option B:** in a terminal run
+**Option B:** in a terminal
 
 ```
-node server.js
+npm install
+npm start
 ```
 
 Then open http://localhost:3000
 
+**Docker:**
+
+```
+docker compose up --build
+```
+
+The first account is seeded as `admin` / `admin123` unless `ADMIN_USER` and `ADMIN_PASS`
+are set. **Change the password after the first login** (top bar → Change password).
+
 ## Where is my data?
 
-Everything is stored in a single SQLite database file: **`events.db`** (next to `server.js`).
+```
+data/db/events.db      # all structured data (SQLite, WAL mode)
+data/files/<eventId>/  # uploaded attachments
+```
 
-To back up or move your data, just copy that one file.
+To move or back up the app, copy the whole `data/` folder — or use **Admin → Backup**, which
+produces one zip with the data and attachments. The database and files are excluded from Git.
 
-## Restoring after moving
+`DATA_DIR` can point somewhere else (for example a mounted volume). If `/main` is writable
+(as on some deployment hosts), the app uses `/main/eventmanager` automatically.
 
-Place `events.db` back in the project folder and start the app — everything reappears.
+### Upgrading from an old version
+
+Older versions stored the database as `events.db` next to `server.js`. If the active
+`data/db/events.db` has no events, the app imports that file once on startup, keeps the
+previous empty database as `data/db/events.db.pre-legacy-<timestamp>`, and logs the migration.
+The old `events.db` is left untouched.
+
+## Tests
+
+```
+npm test
+```
+
+The suite starts the real server against temporary databases and covers roles/permissions,
+event entities, backup → restore (including attachments) and the legacy-database migration.
+See [vibe-docs/docs/testing.md](vibe-docs/docs/testing.md) for the manual checklist.
 
 ## Project structure
 
 ```
-server.js       HTTP server + REST API (Node built-ins only)
-db.js           SQLite database schema and queries
+server.js       HTTP server + REST API + static files
+db.js           SQLite schema, migrations, queries, export/import/backup
 public/         Frontend (HTML + CSS + JS, no build step)
-start.bat       Double-click launcher
-events.db       Your data (created on first run)
+data/           Your database and attachments (created on first run)
+test/           Integration and migration tests (node:test)
+vibe-docs/      Product and engineering documentation
+start.bat       Double-click launcher for Windows
 ```
+
+## Documentation
+
+- [Project docs index](vibe-docs/README.md)
+- [Agent/developer entry point](vibe-docs/CLAUDE.md)
+- [Architecture](vibe-docs/docs/architecture.md) ·
+  [Decisions](vibe-docs/docs/decisions.md) ·
+  [Status](vibe-docs/docs/status.md) ·
+  [Bugs](vibe-docs/docs/bugs.md)

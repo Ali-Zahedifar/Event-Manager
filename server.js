@@ -449,18 +449,24 @@ async function handleAdminBackup(req, res, pathname, method) {
     const boundary = contentType.split('boundary=')[1];
     if (!boundary) return sendError(res, 400, 'Missing boundary');
     const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
+    let size = 0;
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > MAX_BODY) return sendError(res, 413, 'Backup file is too large');
+      chunks.push(chunk);
+    }
     const body = Buffer.concat(chunks);
-    const parts = body.toString('binary').split('--' + boundary);
+    const parts = body.toString('binary').split('--' + boundary.replace(/^"/, '').replace(/"$/, ''));
     let fileBuffer = null;
     for (const part of parts) {
-      if (part.includes('filename=') && part.includes('application/zip')) {
-        const headerEnd = part.indexOf('\r\n\r\n');
-        if (headerEnd !== -1) {
-          fileBuffer = Buffer.from(part.slice(headerEnd + 4, part.lastIndexOf('\r\n')), 'binary');
-          break;
-        }
-      }
+      const headerEnd = part.indexOf('\r\n\r\n');
+      if (headerEnd === -1) continue;
+      const headers = part.slice(0, headerEnd);
+      if (!/filename\s*=\s*"[^"]+"/i.test(headers)) continue;
+      const dataEnd = part.lastIndexOf('\r\n');
+      if (dataEnd <= headerEnd) continue;
+      fileBuffer = Buffer.from(part.slice(headerEnd + 4, dataEnd), 'binary');
+      if (fileBuffer.length) break;
     }
     if (!fileBuffer) return sendError(res, 400, 'No zip file found in upload');
     try {
@@ -491,11 +497,16 @@ async function handleApi(req, res, pathname) {
     return notFound(res);
   }
 
-  // Admin export/backup/restore routes
-  const adminResult = await handleAdminExport(req, res, pathname, method);
-  if (adminResult !== null) return;
-  const backupResult = await handleAdminBackup(req, res, pathname, method);
-  if (backupResult !== null) return;
+  // Admin export/backup/restore routes. Only route /api/admin/* here: these
+  // helpers call requireAdmin() before matching a path, so running them for
+  // every API request would reject every non-admin user.
+  if (pathname.startsWith('/api/admin/')) {
+    const adminResult = await handleAdminExport(req, res, pathname, method);
+    if (adminResult !== null) return;
+    const backupResult = await handleAdminBackup(req, res, pathname, method);
+    if (backupResult !== null) return;
+    return notFound(res);
+  }
 
   // All remaining /api/ routes require authentication
   const user = await requireAuth(req, res);
@@ -912,7 +923,7 @@ function serveStatic(req, res, pathname) {
 
   fs.readFile(filePath, (err, data) => {
     if (err) {
-      if (!err.code || err.code === 'ENOENT') {
+      if (err.code === 'ENOENT') {
         // Try .html extension (e.g. /login -> login.html)
         const htmlFile = safeStaticPath(pathname + '.html');
         if (htmlFile && fs.existsSync(htmlFile)) {
@@ -923,7 +934,8 @@ function serveStatic(req, res, pathname) {
           });
           return;
         }
-        // SPA fallback -> index.html
+        // Missing assets are 404s; only extension-less routes fall back to the SPA.
+        if (ext) return sendError(res, 404, 'Not found');
         fs.readFile(path.join(PUBLIC_DIR, 'index.html'), (e2, html) => {
           if (e2) return sendError(res, 404, 'Not found');
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -964,8 +976,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log('Event Manager running at http://localhost:' + PORT);
-  console.log('Data stored in: ' + path.join(__dirname, 'data', 'db', 'events.db'));
+  const actualPort = server.address().port;
+  console.log('Event Manager running at http://localhost:' + actualPort);
+  console.log('Data stored in: ' + dbm.dbPath);
 });
 
 process.on('SIGTERM', () => {

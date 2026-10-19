@@ -43,6 +43,8 @@ function icon(name, size = 16) {
     more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
     wallet: '<path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2H6"/><path d="M16 3v4h4M12 12h4"/>',
     palette: '<circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1-1.2 0-1.5-1.5-.44-1-2 0-2.5 1.5-.75 3.6-1.2 4-4.5.3-2.8 2.4-4 4-4s2.5 1 2.5-2.5C22.5 4.5 17.5 2 12 2z"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>',
+    moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
     folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
     banknote: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/>',
@@ -60,6 +62,7 @@ function icon(name, size = 16) {
     calendarCheck: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4"/>',
     database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
     upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   };
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p[name] || p.flag}</svg>`;
 }
@@ -105,6 +108,86 @@ function setupLangToggle() {
   document.getElementById('lang-toggle')?.addEventListener('click', () => {
     setLang(LANG === 'fa' ? 'en' : 'fa');
     navigate();
+  });
+}
+
+/* ---------- theme controls (topbar) ---------- */
+/* A sun/moon button that flips light <-> dark, plus a theme button beside it that
+   opens the light / dark / custom menu. Themes are a per-browser preference, so these
+   are topbar controls rather than an event tab. */
+function themeToggleHTML() {
+  const toLight = themeMode() !== 'light';
+  const label = t(toLight ? 'theme.to.light' : 'theme.to.dark');
+  return `<button class="btn btn-sm btn-icon theme-mode-btn" id="theme-mode-btn" title="${esc(label)}" aria-label="${esc(label)}">${icon(toLight ? 'moon' : 'sun', 15)}</button>`;
+}
+
+function themeMenuHTML() {
+  const mode = themeMode();
+  return `
+    <div class="dropdown">
+      <button class="btn btn-sm theme-menu-toggle" id="theme-btn" title="${esc(t('theme'))}">
+        ${icon('palette', 14)} <span>${esc(t('theme.' + mode))}</span>
+      </button>
+      <div class="dropdown-menu theme-menu" id="theme-menu">
+        ${['light', 'dark', 'custom'].map((id) => `
+          <button class="dropdown-item${id === mode ? ' active' : ''}" data-theme="${id}">
+            ${icon(id === 'light' ? 'sun' : id === 'dark' ? 'moon' : 'palette', 13)}
+            <span>${esc(t('theme.' + id))}</span>
+            <span class="dropdown-check">${id === mode ? icon('check', 13) : ''}</span>
+          </button>`).join('')}
+        <div class="dropdown-sep"></div>
+        <button class="dropdown-item" data-act="customize">
+          ${icon('pencil', 13)} <span>${esc(t('theme.customize'))}</span>
+        </button>
+      </div>
+    </div>`;
+}
+
+function themeControlsHTML() {
+  return `${themeToggleHTML()}${themeMenuHTML()}`;
+}
+
+function setupThemeControls() {
+  document.getElementById('theme-mode-btn')?.addEventListener('click', () => {
+    toggleLightDark();
+    refreshThemeControls();
+  });
+
+  const themeBtn = document.getElementById('theme-btn');
+  const menu = document.getElementById('theme-menu');
+  if (themeBtn && menu) {
+    themeBtn.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('open'); });
+    menu.querySelectorAll('.dropdown-item').forEach((item) => item.addEventListener('click', () => {
+      menu.classList.remove('open');
+      if (item.dataset.act === 'customize') return themePaletteModal();
+      saveTheme(item.dataset.theme);
+      refreshThemeControls();
+    }));
+    document.addEventListener('click', () => menu.classList.remove('open'));
+  }
+  refreshThemeControls();
+}
+
+/* Keep the two topbar controls in sync with the theme that is actually applied. */
+function refreshThemeControls() {
+  const mode = themeMode();
+  const modeBtn = document.getElementById('theme-mode-btn');
+  if (modeBtn) {
+    const toLight = mode !== 'light';
+    const label = t(toLight ? 'theme.to.light' : 'theme.to.dark');
+    modeBtn.innerHTML = icon(toLight ? 'moon' : 'sun', 15);
+    modeBtn.title = label;
+    modeBtn.setAttribute('aria-label', label);
+  }
+  const themeBtn = document.getElementById('theme-btn');
+  if (themeBtn) themeBtn.querySelector('span').textContent = t('theme.' + mode);
+  const menu = document.getElementById('theme-menu');
+  if (!menu) return;
+  menu.querySelectorAll('.dropdown-item[data-theme]').forEach((item) => {
+    const on = item.dataset.theme === mode;
+    item.classList.toggle('active', on);
+    const check = item.querySelector('.dropdown-check');
+    if (check) check.innerHTML = on ? icon('check', 13) : '';
   });
 }
 
@@ -222,8 +305,9 @@ function navigate() {
   const hash = location.hash || '#/';
   const m = hash.match(/^#\/event\/(\d+)(?:\/(\w+))?/);
   if (m && isAssignee()) { location.hash = '#/'; return; }
-  if (m) renderEventPage(Number(m[1]), m[2] || 'overview');
-  else {
+  if (m) {
+    renderEventPage(Number(m[1]), m[2] || 'overview');
+  } else {
     if (isAssignee()) renderMyTasks();
     else renderDashboard();
   }
@@ -255,6 +339,7 @@ function appShell(title) {
         <button class="btn btn-sm" id="pw-btn">${esc(t('change.password'))}</button>
         <button class="btn btn-sm" id="logout-btn">${esc(t('logout'))}</button>
         ${langToggleHTML()}
+        ${themeControlsHTML()}
       </div>
     </div>`;
 }
@@ -263,6 +348,7 @@ function appShell(title) {
 async function renderMyTasks() {
   document.getElementById('app').innerHTML = appShell(t('my.tasks'));
   setupLangToggle();
+  setupThemeControls();
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) logoutBtn.addEventListener('click', logout);
   const pwBtn = document.getElementById('pw-btn');
@@ -310,6 +396,7 @@ let allEvents = [];
 
 async function renderDashboard() {
   document.getElementById('app').innerHTML = appShell(t('app.tagline'));
+  setupThemeControls();
   const actions = document.querySelector('.topbar-actions');
   if (isAdmin()) {
     const btn = document.createElement('button');
@@ -420,6 +507,39 @@ function drawEvents(q) {
   });
 }
 
+/* ---------- custom palette modal ---------- */
+function themePaletteModal() {
+  const vars = customTheme().vars;
+  openModal(
+    '<h3>' + icon('palette', 18) + ' ' + esc(t('appearance')) + '</h3>'
+    + '<div class="modal-hint">' + esc(t('theme.custom.desc')) + '</div>'
+    + '<div class="color-grid">'
+    + colorThemeVars().map((key) => `
+        <label class="color-field">
+          <span class="color-label" dir="ltr">${esc(key)}</span>
+          <input class="color-input" type="color" data-key="${esc(key)}" value="${esc(vars[key])}" />
+        </label>`).join('')
+    + '</div>'
+    + '<div class="modal-actions"><button class="btn" id="theme-reset">' + esc(t('theme.reset')) + '</button></div>',
+    { lg: true, onOpen(overlay) {
+      overlay.addEventListener('input', (e) => {
+        const input = e.target;
+        if (!input.classList.contains('color-input')) return;
+        customThemeVars()[input.dataset.key] = input.value;
+        saveCustomTheme();
+        saveTheme('custom');
+        refreshThemeControls();
+      });
+      overlay.querySelector('#theme-reset').addEventListener('click', () => {
+        const next = resetCustomTheme();
+        refreshThemeControls();
+        overlay.querySelectorAll('.color-input').forEach((el) => { el.value = next[el.dataset.key]; });
+        toast(t('theme.reset.done'));
+      });
+    } }
+  );
+}
+
 /* ---------- event page ---------- */
 const TABS = [
   ['overview', 'tab.overview', 'spark'],
@@ -472,6 +592,7 @@ async function renderEventPage(id, tab) {
         <button class="btn btn-sm" id="pw-btn">${esc(t('change.password'))}</button>
         <button class="btn btn-sm" id="logout-btn">${esc(t('logout'))}</button>
         ${langToggleHTML()}
+        ${themeControlsHTML()}
       </div>
     </div>
     <div class="event-header">
@@ -494,6 +615,7 @@ async function renderEventPage(id, tab) {
   bindTabStrip();
   scrollActiveTabIntoView();
   setupLangToggle();
+  setupThemeControls();
   const logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) logoutBtn.addEventListener('click', logout);
   const usersBtn = document.getElementById('users-btn');
@@ -548,12 +670,13 @@ function featureOn(tab) {
 }
 
 function visibleTabs() {
+  // Settings is a local, per-browser preference tab: anyone who can open the
+  // event sees it, regardless of module toggles or per-tab permissions.
   return TABS.filter(([k]) => featureOn(k) && canAccess(k, currentEvent.id)).map(([k]) => k);
 }
 
 function fallbackTab() {
-  const first = visibleTabs()[0];
-  return first || 'overview';
+  return visibleTabs()[0] || null;
 }
 
 function renderTabStrip() {
@@ -588,6 +711,10 @@ function renderEvent() {
   document.getElementById('ev-sub').innerHTML = sub.join('');
 
   const body = document.getElementById('tab-body');
+  if (!currentTab) {
+    body.innerHTML = `<div class="empty"><div class="big">🔒</div><h3>${esc(t('no.access'))}</h3></div>`;
+    return;
+  }
   const renderers = { overview: renderOverview, team: renderTeam, tasks: renderTasks, sponsors: renderSponsors, timeline: renderTimeline, files: renderFiles, finances: renderFinances, budget: renderBudget, design: renderDesign, participants: renderParticipants, guests: renderGuests, speakers: renderSpeakers, workshops: renderWorkshops, adventures: renderAdventures, shows: renderShows, meetings: renderMeetings };
   body.innerHTML = `<div class="loading">${esc(t('loading'))}</div>`;
   renderers[currentTab]();
@@ -596,10 +723,11 @@ function renderEvent() {
 /* ---------- overview ---------- */
 function renderOverview() {
   const ev = currentEvent;
+  const canEditEvent = isAdmin();
   document.getElementById('tab-body').innerHTML = `
     <div class="section-head">
       <h3>${esc(t('ov.details'))}</h3>
-      <button class="btn btn-sm" id="ov-edit">${icon('pencil', 13)} ${esc(t('edit'))}</button>
+      ${canEditEvent ? `<button class="btn btn-sm" id="ov-edit">${icon('pencil', 13)} ${esc(t('edit'))}</button>` : ''}
     </div>
     <div class="info-grid">
       <div class="card info-item"><div class="lbl">${esc(t('ov.date'))}</div><div class="val">${ev.date ? esc(fmtDate(ev.date)) : `<span style="color:var(--muted)">${esc(t('not.set'))}</span>`}</div></div>
@@ -609,13 +737,14 @@ function renderOverview() {
     </div>
     <div class="section-head" style="margin-top:26px;">
       <h3>${esc(t('critical'))}</h3>
-      <button class="btn btn-sm" id="ov-edit-critical">${icon('pencil', 13)} ${esc(t('edit'))}</button>
+      ${canEditEvent ? `<button class="btn btn-sm" id="ov-edit-critical">${icon('pencil', 13)} ${esc(t('edit'))}</button>` : ''}
     </div>
     <div class="critical-box">
       <div class="lbl">${icon('alert', 15)} ${esc(t('critical.note'))}</div>
       <div class="val" id="critical-val">${ev.critical_info ? esc(ev.critical_info) : `<em style="color:#a8913f">${esc(t('critical.empty'))}</em>`}</div>
     </div>`;
 
+  if (!canEditEvent) return;
   document.getElementById('ov-edit').addEventListener('click', () => eventFormModal(ev));
   document.getElementById('ov-edit-critical').addEventListener('click', () => {
     openModal(`
@@ -794,7 +923,10 @@ function renderTasks() {
   if (canWriteTab('tasks', currentEvent.id)) document.getElementById('add-task').addEventListener('click', () => taskFormModal());
   else { const b = document.getElementById('add-task'); if (b) b.style.display = 'none'; }
   bindRowActions('.task-card', 'task-actions');
+  const writable = canWriteTab('tasks', currentEvent.id);
+  if (!writable) document.querySelectorAll('.task-card [data-status]').forEach((sel) => { sel.disabled = true; });
   document.querySelectorAll('.task-card [data-status]').forEach((sel) => {
+    if (!writable) return;
     sel.addEventListener('change', async (e) => {
       const id = sel.closest('.task-card').dataset.id;
       const task = currentEvent.tasks.find((x) => String(x.id) === id);
@@ -1638,10 +1770,10 @@ function budgetFormModal(item) {
         const dl = overlay.querySelector('#b-cat-list');
         const fundWrap = overlay.querySelector('#b-funding-wrap');
         typeSel.addEventListener('change', () => {
-          const t = typeSel.value;
-          const keys = BUDGET_CAT_KEYS[t === 'income' ? 'income' : 'expense'];
+          const type = typeSel.value;
+          const keys = BUDGET_CAT_KEYS[type === 'income' ? 'income' : 'expense'];
           dl.innerHTML = keys.map((k) => `<option value="${esc(t('bud.cat.' + k))}">`).join('');
-          if (fundWrap) fundWrap.style.display = t === 'income' ? 'none' : 'block';
+          if (fundWrap) fundWrap.style.display = type === 'income' ? 'none' : 'block';
         });
         overlay.querySelector('#b-save').addEventListener('click', async () => {
           const type = overlay.querySelector('#b-type').value;
@@ -2742,6 +2874,12 @@ function editByType(id) {
   } else if (tab === 'adventures') {
     const a = currentEvent.adventures.find((x) => x.id === id);
     if (a) adventureFormModal(a);
+  } else if (tab === 'shows') {
+    const s = (currentEvent.shows || []).find((x) => x.id === id);
+    if (s) showFormModal(s);
+  } else if (tab === 'meetings') {
+    const m = (currentEvent.meetings || []).find((x) => x.id === id);
+    if (m) meetingFormModal(m);
   }
 }
 
@@ -2784,6 +2922,12 @@ async function delByType(id) {
   } else if (tab === 'adventures') {
     currentEvent = await api.deleteAdventure(evId, id) ? (await api.event(evId)) : currentEvent;
     renderAdventures();
+  } else if (tab === 'shows') {
+    currentEvent = await api.deleteShow(evId, id) ? (await api.event(evId)) : currentEvent;
+    renderShows();
+  } else if (tab === 'meetings') {
+    currentEvent = await api.deleteMeeting(evId, id) ? (await api.event(evId)) : currentEvent;
+    renderMeetings();
   }
   toast(t('deleted'));
 }
@@ -2841,6 +2985,7 @@ function modulesModal() {
           await api.updateEvent(currentEvent.id, { features: picked });
           currentEvent = await api.event(currentEvent.id);
           if (!featureOn(currentTab)) currentTab = fallbackTab();
+          if (!currentTab) currentTab = 'overview';
           closeModal();
           const nav = document.getElementById('ev-nav');
           if (nav) nav.innerHTML = renderTabStrip();
@@ -3179,7 +3324,7 @@ function restoreBackupModal() {
           if (location.hash.startsWith('#/event/')) {
             const id = Number(location.hash.split('/')[2]);
             currentEvent = await api.event(id);
-            renderTabs();
+            renderEvent();
           }
         } catch (e) {
           toast(e.message || 'Restore failed');
@@ -3194,6 +3339,7 @@ function restoreBackupModal() {
 
 /* ---------- boot ---------- */
 (async () => {
+  applyTheme(storageGet(THEME_KEY) || 'light');
   const ok = await authMe();
   if (ok) navigate();
 })();

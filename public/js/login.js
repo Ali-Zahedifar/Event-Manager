@@ -1,4 +1,4 @@
-const LANG_KEY = 'evm_lang';
+const LANG_KEY = 'em-lang';
 const I18N = {
   en: {
     'event.manager': 'Event Manager',
